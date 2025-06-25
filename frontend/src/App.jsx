@@ -40,6 +40,7 @@ const schema = yup.object({
 });
 
 const TWELVE_DATA_API_KEY = import.meta.env.VITE_TWELVE_DATA_API_KEY;
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL; // New backend URL env variable
 
 export default function App() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("darkMode") === "true");
@@ -118,7 +119,7 @@ export default function App() {
   const [fetchError, setFetchError] = useState(null);
 
   const fetchMultipleStocks = async (tickers, days) => {
-    const response = await fetch("http://localhost:4000/api/stock-candles-multi", {
+    const response = await fetch(`${BACKEND_URL}/api/stock-candles-multi`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tickers, days }),

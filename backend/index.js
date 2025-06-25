@@ -5,7 +5,7 @@ const bodyParser = require('body-parser');
 const fetch = require('node-fetch');
 
 const app = express();
-const PORT = 4000;
+const PORT = process.env.PORT || 4000; // Use dynamic port for Render or fallback to 4000
 
 app.use(cors());
 app.use(bodyParser.json());
