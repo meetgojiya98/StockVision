@@ -3052,6 +3052,13 @@ function App() {
               <div className="auth-home-top-badges">
                 <span>Always-free data</span>
                 <span>Cloud memory on</span>
+                <button
+                  type="button"
+                  className="auth-theme-toggle"
+                  onClick={() => setTheme((previous) => (previous === "night" ? "day" : "night"))}
+                >
+                  {theme === "night" ? "Switch to Daylight" : "Switch to Afterhours"}
+                </button>
               </div>
             </div>
             <div className="auth-home-copy">
