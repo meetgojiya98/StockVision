@@ -628,6 +628,60 @@ body::after {
   font-size: 0.85rem;
 }
 
+.auth-backend-banner {
+  margin-top: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.07);
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.auth-backend-banner strong {
+  display: block;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.auth-backend-banner p {
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  max-width: 42ch;
+}
+
+.auth-backend-banner small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+}
+
+.auth-backend-banner .ghost-action {
+  min-height: 32px;
+  padding: 6px 10px;
+}
+
+.auth-backend-banner.online {
+  border-color: rgba(125, 255, 206, 0.38);
+  background: rgba(125, 255, 206, 0.1);
+}
+
+.auth-backend-banner.offline {
+  border-color: rgba(255, 156, 168, 0.42);
+  background: rgba(255, 156, 168, 0.1);
+}
+
+.auth-backend-banner.checking {
+  border-color: rgba(120, 169, 255, 0.4);
+  background: rgba(120, 169, 255, 0.1);
+}
+
 .auth-mode-toggle {
   margin-top: 12px;
   display: grid;
@@ -3847,6 +3901,15 @@ kbd {
 
   .focus-toggle {
     width: 100%;
+  }
+
+  .auth-backend-banner {
+    flex-direction: column;
+  }
+
+  .auth-backend-banner .ghost-action {
+    width: 100%;
+    justify-content: center;
   }
 
   .home-lanes-head,

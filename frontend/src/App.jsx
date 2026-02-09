@@ -995,7 +995,18 @@ function App() {
           password: "",
         });
       } catch (error) {
-        setAuthError(error.message || "Authentication failed.");
+        const message = String(error?.message || "Authentication failed.");
+        if (message.includes("Unable to reach backend API")) {
+          setAuthError(
+            "Cannot reach backend API. Start it with `cd backend && npm start`, then retry sign up/sign in."
+          );
+        } else if (message.includes("Unable to create account.")) {
+          setAuthError(
+            "Account creation failed on server. Check backend logs and retry with a new email."
+          );
+        } else {
+          setAuthError(message);
+        }
       } finally {
         setAuthSubmitting(false);
       }
@@ -3137,6 +3148,21 @@ function App() {
               <div className="auth-head">
                 <h2>{authMode === "signup" ? "Create Account" : "Sign In"}</h2>
                 <p>{authMode === "signup" ? "Start syncing your full app state." : "Continue from your last cloud session."}</p>
+              </div>
+              <div className={`auth-backend-banner ${backendStatus}`}>
+                <div>
+                  <strong>Backend {backendStatus}</strong>
+                  <p>{backendDetails || (backendStatus === "checking" ? "Checking backend..." : "Backend status unavailable.")}</p>
+                  {backendEndpoint ? <small>{backendEndpoint}</small> : null}
+                </div>
+                <button
+                  type="button"
+                  className="ghost-action"
+                  onClick={testBackendConnection}
+                  disabled={backendStatus === "checking"}
+                >
+                  {backendStatus === "checking" ? "Checking..." : "Retest"}
+                </button>
               </div>
               <div className="auth-mode-toggle">
                 <button
