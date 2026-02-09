@@ -836,60 +836,101 @@ body::after {
   color: var(--text-soft);
 }
 
-.ops-ribbon {
+.home-orbit {
   margin-top: 16px;
   padding: 16px 18px;
+  background:
+    radial-gradient(140% 130% at 12% -30%, rgba(117, 167, 255, 0.2), transparent 56%),
+    linear-gradient(155deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
 }
 
-.ops-grid {
-  display: grid;
+.home-orbit-head {
+  display: flex;
+  justify-content: space-between;
   gap: 10px;
+  align-items: flex-start;
+}
+
+.home-orbit-head h2 {
+  margin: 0;
+  font-family: "Sora", sans-serif;
+  font-size: 1.06rem;
+}
+
+.home-orbit-head p {
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: 0.83rem;
+  max-width: 62ch;
+}
+
+.home-orbit-shortcuts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.home-orbit-shortcuts span {
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 4px 8px;
+  font-size: 0.7rem;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.home-orbit-grid {
+  margin-top: 11px;
+  display: grid;
+  gap: 9px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.ops-metric {
-  border-radius: 14px;
+.home-orbit-card {
+  border-radius: 13px;
   border: 1px solid var(--panel-border);
-  padding: 11px 12px;
   background: rgba(255, 255, 255, 0.05);
+  padding: 10px 11px;
 }
 
-.ops-metric p {
+.home-orbit-card p {
   margin: 0;
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   color: var(--text-soft);
 }
 
-.ops-metric h3 {
-  margin: 7px 0 0;
-  font-size: 1rem;
+.home-orbit-card h3 {
+  margin: 6px 0 0;
+  font-size: 0.97rem;
   font-family: "Sora", sans-serif;
 }
 
-.ops-metric small {
+.home-orbit-card small,
+.home-orbit-card em {
   display: block;
-  margin-top: 5px;
-  color: var(--text-soft);
+  margin-top: 4px;
   font-size: 0.76rem;
+  color: var(--text-soft);
   line-height: 1.35;
 }
 
-.ops-actions {
-  margin-top: 12px;
+.home-orbit-card em {
+  font-style: normal;
+}
+
+.home-orbit-actions {
+  margin-top: 11px;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.ops-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.shortcut-copy {
+.home-orbit-footnote {
   margin: 10px 0 0;
   font-size: 0.8rem;
   color: var(--text-soft);
@@ -1295,7 +1336,7 @@ body::after {
 }
 
 .app-shell[data-focus="on"] .hero-panel,
-.app-shell[data-focus="on"] .ops-ribbon,
+.app-shell[data-focus="on"] .home-orbit,
 .app-shell[data-focus="on"] .command-intel-grid {
   display: none;
 }
@@ -3384,6 +3425,14 @@ kbd {
     grid-template-columns: 1fr 1fr;
   }
 
+  .home-orbit-head {
+    flex-direction: column;
+  }
+
+  .home-orbit-shortcuts {
+    justify-content: flex-start;
+  }
+
   .workspace-tablist {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3450,6 +3499,10 @@ kbd {
     flex-direction: column;
   }
 
+  .home-orbit-shortcuts {
+    width: 100%;
+  }
+
   .workspace-shortcuts {
     white-space: normal;
   }
@@ -3499,7 +3552,8 @@ kbd {
   .command-intel-grid,
   .activity-stats,
   .replay-stats,
-  .ops-grid,
+  .home-orbit-grid,
+  .home-orbit-actions,
   .deck-health-grid,
   .deck-depth-grid,
   .threshold-grid,

@@ -3016,7 +3016,7 @@ function App() {
         <section className="glass-card auth-loading-card">
           <BrandLogo />
           <div>
-            <h1>StockVision X</h1>
+            <h1>StockVision</h1>
             <p>Restoring your account session and cloud profile...</p>
           </div>
         </section>
@@ -3038,7 +3038,7 @@ function App() {
               <div className="brand-wrap">
                 <BrandLogo />
                 <div>
-                  <p className="brand-title">StockVision X</p>
+                  <p className="brand-title">StockVision</p>
                   <p className="brand-subtitle">AI Trading Command Center</p>
                 </div>
               </div>
@@ -3224,7 +3224,7 @@ function App() {
         <div className="brand-wrap">
           <BrandLogo />
           <div>
-            <p className="brand-title">StockVision X</p>
+            <p className="brand-title">StockVision</p>
             <p className="brand-subtitle">AI Trading Command Center</p>
           </div>
         </div>
@@ -3296,7 +3296,7 @@ function App() {
             <p className="hero-eyebrow">Command Home</p>
             <h1>From discovery to execution, every trading move lives in one operating system.</h1>
             <p>
-              StockVision X combines signal intelligence, AI playbooks, portfolio guardrails, and strategy validation
+              StockVision combines signal intelligence, AI playbooks, portfolio guardrails, and strategy validation
               into a continuous workflow with cloud-backed state.
             </p>
             <div className="hero-command-row">
@@ -3423,57 +3423,85 @@ function App() {
       </motion.section>
 
       <motion.section
-        className="glass-card ops-ribbon"
+        className="glass-card home-orbit"
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ ...STAGGER_ITEM, delay: 0.12 }}
       >
-        <div className="ops-grid">
-          <div className="ops-metric">
-            <p>Market Regime</p>
+        <div className="home-orbit-head">
+          <div>
+            <h2>Market Orbit</h2>
+            <p>Live command snapshot combining setup quality, breadth pressure, and execution readiness.</p>
+          </div>
+          <div className="home-orbit-shortcuts">
+            <span>/ search</span>
+            <span>Shift+S scan</span>
+            <span>Shift+B brief</span>
+            <span>Shift+X stage</span>
+          </div>
+        </div>
+        <div className="home-orbit-grid">
+          <article className="home-orbit-card">
+            <p>Regime</p>
             <h3 className={marketRegime.toneClass}>{marketRegime.label}</h3>
             <small>{marketRegime.detail}</small>
-          </div>
-          <div className="ops-metric">
-            <p>Lead Setup</p>
+            <em>{pulseSummary.advancers || 0} advancers · {pulseSummary.decliners || 0} decliners</em>
+          </article>
+          <article className="home-orbit-card">
+            <p>Signal Leader</p>
             <h3>{topSignal ? `${topSignal.ticker} · ${topSignal.profileScore}` : "--"}</h3>
             <small>{topSignal ? `${topSignal.metrics.trend} / ${topSignal.metrics.momentum}` : "Run a scan to rank setups."}</small>
-          </div>
-          <div className="ops-metric">
-            <p>Heat + Breadth</p>
+            <em>{topSignal ? `${formatPercent(topSignal.metrics.changePct || 0)} daily move` : "Awaiting data"}</em>
+          </article>
+          <article className="home-orbit-card">
+            <p>Tape Heat</p>
             <h3 className={toneClass(pulseSummary.avgMove || 0)}>{formatPercent(pulseSummary.avgMove || 0)}</h3>
             <small>
-              {pulseSummary.advancers || 0} advancers / {pulseSummary.decliners || 0} decliners
+              Leaders {pulseLeader ? `${pulseLeader.symbol} ${formatPercent(pulseLeader.percentChange)}` : "N/A"}
             </small>
-          </div>
-          <div className="ops-metric">
-            <p>AI Engine</p>
-            <h3>{aiEngineDisplay}</h3>
+            <em>
+              Laggards {pulseLaggard ? `${pulseLaggard.symbol} ${formatPercent(pulseLaggard.percentChange)}` : "N/A"}
+            </em>
+          </article>
+          <article className="home-orbit-card">
+            <p>Execution</p>
+            <h3>{topExecutionPlan ? `${topExecutionPlan.ticker} · ${topExecutionPlan.planScore}` : "--"}</h3>
             <small>
-              Volatility map: {formatPercent(averageVolatility)} · Sentinel {sentinelStatus.label}
+              {topExecutionPlan
+                ? `${formatCompactNumber(topExecutionPlan.plannedShares)} shares · RR ${topExecutionPlan.rr.toFixed(2)}`
+                : "No execution plan yet"}
             </small>
-          </div>
+            <em>AI engine {aiEngineDisplay} · Sentinel {sentinelStatus.label}</em>
+          </article>
         </div>
-        <div className="ops-actions">
-          <button type="button" className="ghost-action ops-action" onClick={runMarketScan} disabled={loadingData}>
-            <span>{loadingData ? "Scanning..." : "Run Scan"}</span>
+        <div className="home-orbit-actions">
+          <button type="button" className="primary-action" onClick={runMarketScan} disabled={loadingData}>
+            <span>{loadingData ? "Scanning..." : "Run Market Scan"}</span>
             <kbd>Shift+S</kbd>
           </button>
-          <button type="button" className="ghost-action ops-action" onClick={refreshPulse} disabled={pulseLoading}>
-            <span>Pulse</span>
+          <button type="button" className="ghost-action" onClick={refreshPulse} disabled={pulseLoading}>
+            <span>Refresh Pulse</span>
             <kbd>Shift+P</kbd>
           </button>
-          <button type="button" className="ghost-action ops-action" onClick={refreshNews} disabled={newsLoading}>
-            <span>News</span>
+          <button type="button" className="ghost-action" onClick={refreshNews} disabled={newsLoading}>
+            <span>Refresh News</span>
             <kbd>Shift+N</kbd>
           </button>
-          <button type="button" className="ghost-action ops-action" onClick={generateAiBrief} disabled={aiLoading}>
-            <span>AI Brief</span>
+          <button type="button" className="ghost-action" onClick={generateAiBrief} disabled={aiLoading}>
+            <span>Generate AI Brief</span>
             <kbd>Shift+B</kbd>
           </button>
+          <button type="button" className="ghost-action" onClick={() => stageExecutionPlanPosition(topExecutionPlan)} disabled={!topExecutionPlan?.canStage}>
+            <span>Stage Top Execution</span>
+            <kbd>Shift+X</kbd>
+          </button>
+          <button type="button" className="ghost-action" onClick={openCommandPalette}>
+            <span>Open Command Menu</span>
+            <kbd>Ctrl/Cmd+K</kbd>
+          </button>
         </div>
-        <p className="shortcut-copy">
-          Press "/" for ticker search, Shift+A to draft top opportunity AI plan, and Shift+X to stage top execution.
+        <p className="home-orbit-footnote">
+          Home command lane: scan, pulse, intelligence, and execution are now sequenced in one fast surface.
         </p>
       </motion.section>
 

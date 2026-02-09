@@ -1,6 +1,6 @@
-# StockVision X
+# StockVision
 
-StockVision X is a full-stack stock intelligence app with:
+StockVision is a full-stack stock intelligence app with:
 
 - Multi-ticker charting (candles + line mode)
 - Range-based market scans with derived technical metrics
