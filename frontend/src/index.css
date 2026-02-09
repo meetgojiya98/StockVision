@@ -265,6 +265,20 @@ body {
   align-items: flex-start;
 }
 
+.backend-status {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-soft);
+}
+
+.backend-status.online {
+  color: #8df7bf;
+}
+
+.backend-status.offline {
+  color: #ff9a9a;
+}
+
 .search-form {
   position: relative;
   margin-top: 14px;

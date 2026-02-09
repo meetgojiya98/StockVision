@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import AdvancedChart from "./AdvancedChart";
 import {
+  fetchBackendHealth,
   fetchAiInsight,
   fetchMarketNews,
   fetchMarketPulse,
@@ -424,6 +425,8 @@ function App() {
   const [loadingData, setLoadingData] = useState(false);
   const [dataError, setDataError] = useState("");
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [backendStatus, setBackendStatus] = useState("checking");
+  const [backendDetails, setBackendDetails] = useState("");
   const [focusTicker, setFocusTicker] = useState(selectedTickers[0] || "");
   const scanInFlightRef = useRef(false);
 
@@ -519,6 +522,26 @@ function App() {
       };
     });
   }, [backtestConfig?.ticker, focusTicker, selectedTickers, setBacktestConfig]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const health = await fetchBackendHealth();
+        if (cancelled) return;
+        setBackendStatus("online");
+        const provider = health?.services?.marketDataProvider || "unknown";
+        setBackendDetails(`API online · provider: ${provider}`);
+      } catch (error) {
+        if (cancelled) return;
+        setBackendStatus("offline");
+        setBackendDetails(error.message || "Backend unavailable");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const addTicker = useCallback(
     (rawValue) => {
@@ -1081,6 +1104,9 @@ function App() {
             <h2>Command Deck</h2>
             <p>Discovery, presets, profile tuning, and scan cadence in one console.</p>
           </div>
+          <p className={`backend-status ${backendStatus}`}>
+            {backendDetails || (backendStatus === "checking" ? "Checking backend..." : "")}
+          </p>
 
           <form className="search-form" ref={suggestionsRef} onSubmit={handleSearchSubmit}>
             <input
