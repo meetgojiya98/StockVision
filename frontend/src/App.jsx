@@ -3004,6 +3004,13 @@ function App() {
       }),
     [marketData, marketPulse, quoteSnapshot, selectedTickers]
   );
+  const workspaceMomentum = {
+    market: clamp(scanCoverage.available * 16 + (loadingData ? 8 : 0), 18, 100),
+    intelligence: clamp((aiInsight ? 68 : 26) + newsItems.length * 2, 18, 100),
+    portfolio: clamp((positions.length ? 44 : 24) + portfolioGuardrails.length * 10, 18, 100),
+    strategy: clamp((backtestResult?.summary ? 72 : 28) + (backtestResult?.summary?.trades || 0) * 2, 18, 100),
+  };
+  const completedMissionSteps = missionSteps.filter((step) => step.done).length;
 
   if (authChecking) {
     return (
@@ -3286,18 +3293,18 @@ function App() {
       </motion.header>
 
       <motion.section
-        className="hero-panel"
+        className="hero-panel home-hero-shell"
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ ...STAGGER_ITEM, delay: 0.1 }}
       >
-        <div className="hero-layout">
-          <div className="hero-main">
+        <div className="home-hero-grid">
+          <div className="home-hero-copy">
             <p className="hero-eyebrow">Command Home</p>
-            <h1>From discovery to execution, every trading move lives in one operating system.</h1>
+            <h1>Trade like a modern desk, not a spreadsheet.</h1>
             <p>
-              StockVision combines signal intelligence, AI playbooks, portfolio guardrails, and strategy validation
-              into a continuous workflow with cloud-backed state.
+              Built with a product-first layout inspired by top-tier consumer apps: clear lanes, instant actions,
+              and deep context without clutter.
             </p>
             <div className="hero-command-row">
               <button type="button" className="primary-action" onClick={runMarketScan} disabled={loadingData}>
@@ -3315,98 +3322,63 @@ function App() {
                 Open Command Menu
               </button>
             </div>
-            <div className="hero-stats">
-              <div>
-                <span>{selectedTickers.length}</span>
-                <p>Tracked Symbols</p>
-              </div>
-              <div>
-                <span>{averageSignalScore.toFixed(1)}</span>
-                <p>Avg Signal Score</p>
-              </div>
-              <div>
-                <span>{lastRefresh ? lastRefresh.toLocaleTimeString() : "--:--"}</span>
-                <p>Last Scan</p>
-              </div>
-              <div>
-                <span>{autoRefreshSec ? `${autoRefreshSec}s` : "Manual"}</span>
-                <p>Refresh Cadence</p>
-              </div>
-              <div>
-                <span>{replayHistory.length}</span>
-                <p>Replay Snapshots</p>
-              </div>
-              <div>
-                <span>{cloudSyncLabel}</span>
-                <p>Cloud Sync</p>
-              </div>
+            <div className="home-hero-chip-row">
+              <span>Cloud {cloudSyncLabel}</span>
+              <span>AI Engine {aiEngineDisplay}</span>
+              <span>Sentinel {sentinelStatus.label}</span>
+              <span>
+                Mission {completedMissionSteps}/{missionSteps.length}
+              </span>
             </div>
           </div>
-          <div className="hero-quickpanel">
-            <p className="hero-quick-eyebrow">Session Snapshot</p>
-            <div className="hero-quick-list">
+          <div className="home-hero-panels">
+            <article className="home-hero-primary">
+              <p>Front-Runner Setup</p>
+              <h2>
+                {topOpportunity
+                  ? `${topOpportunity.ticker} · ${topOpportunity.direction} · RR ${topOpportunity.rr.toFixed(2)}`
+                  : "No setup yet"}
+              </h2>
+              <small>
+                {topOpportunity
+                  ? `Entry ${formatCurrency(topOpportunity.entry)} · Stop ${formatCurrency(topOpportunity.stop)} · Target ${formatCurrency(topOpportunity.target)}`
+                  : "Run market scan to surface the highest-conviction opportunity."}
+              </small>
+              <div className="home-hero-primary-actions">
+                <button type="button" className="ghost-action" onClick={runMarketScan} disabled={loadingData}>
+                  Refresh setup
+                </button>
+                <button
+                  type="button"
+                  className="ghost-action"
+                  onClick={() => stageOpportunityBacktest(topOpportunity)}
+                  disabled={!topOpportunity}
+                >
+                  Open In Strategy
+                </button>
+              </div>
+            </article>
+            <div className="home-hero-kpis">
               <div>
-                <span>Lead Setup</span>
-                <strong>{topSignal ? `${topSignal.ticker} · ${topSignal.profileScore}` : "No signal yet"}</strong>
+                <span>Tracked</span>
+                <strong>{selectedTickers.length} symbols</strong>
               </div>
               <div>
-                <span>Market Regime</span>
-                <strong>{marketRegime.label}</strong>
+                <span>Avg signal</span>
+                <strong>{averageSignalScore.toFixed(1)}</strong>
               </div>
               <div>
-                <span>Sentinel</span>
-                <strong>{sentinelStatus.label}</strong>
+                <span>Last scan</span>
+                <strong>{lastRefresh ? lastRefresh.toLocaleTimeString() : "--:--"}</strong>
               </div>
               <div>
-                <span>Mission Step</span>
-                <strong>{activeMissionStep?.label || "Complete workflow"}</strong>
-              </div>
-            </div>
-            <div className="hero-spotlight-grid">
-              <div>
-                <span>Alpha Lead</span>
-                <strong>
-                  {topOpportunity
-                    ? `${topOpportunity.ticker} · ${topOpportunity.direction} · RR ${topOpportunity.rr.toFixed(2)}`
-                    : "Run market scan to generate alpha"}
-                </strong>
-              </div>
-              <div>
-                <span>Execution Lead</span>
+                <span>Execution lead</span>
                 <strong>
                   {topExecutionPlan
-                    ? `${topExecutionPlan.ticker} · ${formatCompactNumber(topExecutionPlan.plannedShares)} sh · score ${topExecutionPlan.planScore}`
-                    : "Execution plans pending"}
+                    ? `${topExecutionPlan.ticker} · score ${topExecutionPlan.planScore}`
+                    : "No plan yet"}
                 </strong>
               </div>
-              <div>
-                <span>Pulse Leader</span>
-                <strong>
-                  {pulseLeader ? `${pulseLeader.symbol} ${formatPercent(pulseLeader.percentChange)}` : "No pulse leader"}
-                </strong>
-              </div>
-              <div>
-                <span>Pulse Laggard</span>
-                <strong>
-                  {pulseLaggard ? `${pulseLaggard.symbol} ${formatPercent(pulseLaggard.percentChange)}` : "No laggard"}
-                </strong>
-              </div>
-            </div>
-            <div className="hero-quick-actions">
-              <button
-                type="button"
-                className="ghost-action"
-                onClick={() => syncCloudProfileNow()}
-                disabled={cloudSyncState.status === "saving"}
-              >
-                {cloudSyncState.status === "saving" ? "Syncing..." : "Sync Cloud State"}
-              </button>
-              <button type="button" className="ghost-action" onClick={() => setActiveWorkspace("intelligence")}>
-                Open AI Intelligence
-              </button>
-              <button type="button" className="ghost-action" onClick={() => setActiveWorkspace("portfolio")}>
-                Open Portfolio Ops
-              </button>
             </div>
           </div>
         </div>
@@ -3423,86 +3395,117 @@ function App() {
       </motion.section>
 
       <motion.section
-        className="glass-card home-orbit"
+        className="glass-card home-lanes"
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ ...STAGGER_ITEM, delay: 0.12 }}
       >
-        <div className="home-orbit-head">
+        <div className="home-lanes-head">
           <div>
-            <h2>Market Orbit</h2>
-            <p>Live command snapshot combining setup quality, breadth pressure, and execution readiness.</p>
+            <h2>Choose Your Workflow Lane</h2>
+            <p>Each lane is intentionally focused so you can move from insight to execution without context switching.</p>
           </div>
-          <div className="home-orbit-shortcuts">
-            <span>/ search</span>
-            <span>Shift+S scan</span>
-            <span>Shift+B brief</span>
-            <span>Shift+X stage</span>
+          <div className="home-lanes-badges">
+            <span>Alt+1/2/3/4</span>
+            <span>Shift shortcuts</span>
+            <span>Ctrl/Cmd+K command palette</span>
           </div>
         </div>
-        <div className="home-orbit-grid">
-          <article className="home-orbit-card">
+        <div className="home-lanes-grid">
+          {workspaceTabs.map((tab) => (
+            <article key={tab.id} className={`home-lane-card ${activeWorkspace === tab.id ? "active" : ""}`}>
+              <div className="home-lane-top">
+                <span>{tab.label}</span>
+                <em>{tab.stat}</em>
+              </div>
+              <p>{tab.hint}</p>
+              <div className="home-lane-meter">
+                <span style={{ width: `${workspaceMomentum[tab.id]}%` }} />
+              </div>
+              <div className="home-lane-meta">
+                <small>Lane momentum {Math.round(workspaceMomentum[tab.id])}%</small>
+                <button type="button" onClick={() => setActiveWorkspace(tab.id)}>
+                  Open {WORKSPACE_SHORT_LABEL[tab.id]}
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </motion.section>
+
+      <motion.section
+        className="glass-card home-command-deck"
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ ...STAGGER_ITEM, delay: 0.14 }}
+      >
+        <div className="home-command-head">
+          <div>
+            <h2>Command Deck</h2>
+            <p>Run the complete loop in seconds: scan, pulse, AI brief, then execution staging.</p>
+          </div>
+          <p className="home-command-footnote">
+            Active mission step: <strong>{activeMissionStep?.label || "Complete workflow"}</strong>
+          </p>
+        </div>
+        <div className="home-command-grid">
+          <button type="button" className="home-command-tile primary" onClick={runMarketScan} disabled={loadingData}>
+            <span>Run Market Scan</span>
+            <strong>{loadingData ? "Scanning market..." : `${scanCoverage.available} symbols enriched`}</strong>
+            <em>Shift+S</em>
+          </button>
+          <button type="button" className="home-command-tile" onClick={refreshPulse} disabled={pulseLoading}>
+            <span>Refresh Market Pulse</span>
+            <strong>
+              {pulseLoading ? "Refreshing pulse..." : `${pulseSummary.advancers || 0} advancers · ${pulseSummary.decliners || 0} decliners`}
+            </strong>
+            <em>Shift+P</em>
+          </button>
+          <button type="button" className="home-command-tile" onClick={generateAiBrief} disabled={aiLoading}>
+            <span>Generate AI Brief</span>
+            <strong>{aiLoading ? "Building tactical brief..." : aiInsight ? "Brief ready for execution review" : "No brief yet"}</strong>
+            <em>Shift+B</em>
+          </button>
+          <button
+            type="button"
+            className="home-command-tile"
+            onClick={() => stageExecutionPlanPosition(topExecutionPlan)}
+            disabled={!topExecutionPlan?.canStage}
+          >
+            <span>Stage Top Execution</span>
+            <strong>
+              {topExecutionPlan
+                ? `${topExecutionPlan.ticker} · ${formatCompactNumber(topExecutionPlan.plannedShares)} shares`
+                : "No execution plan available"}
+            </strong>
+            <em>Shift+X</em>
+          </button>
+        </div>
+        <div className="home-command-orbit">
+          <article className="home-command-orbit-card">
             <p>Regime</p>
             <h3 className={marketRegime.toneClass}>{marketRegime.label}</h3>
             <small>{marketRegime.detail}</small>
-            <em>{pulseSummary.advancers || 0} advancers · {pulseSummary.decliners || 0} decliners</em>
           </article>
-          <article className="home-orbit-card">
+          <article className="home-command-orbit-card">
             <p>Signal Leader</p>
             <h3>{topSignal ? `${topSignal.ticker} · ${topSignal.profileScore}` : "--"}</h3>
-            <small>{topSignal ? `${topSignal.metrics.trend} / ${topSignal.metrics.momentum}` : "Run a scan to rank setups."}</small>
-            <em>{topSignal ? `${formatPercent(topSignal.metrics.changePct || 0)} daily move` : "Awaiting data"}</em>
+            <small>{topSignal ? `${topSignal.metrics.trend} / ${topSignal.metrics.momentum}` : "Awaiting scan data."}</small>
           </article>
-          <article className="home-orbit-card">
+          <article className="home-command-orbit-card">
             <p>Tape Heat</p>
             <h3 className={toneClass(pulseSummary.avgMove || 0)}>{formatPercent(pulseSummary.avgMove || 0)}</h3>
             <small>
-              Leaders {pulseLeader ? `${pulseLeader.symbol} ${formatPercent(pulseLeader.percentChange)}` : "N/A"}
+              Lead {pulseLeader ? `${pulseLeader.symbol} ${formatPercent(pulseLeader.percentChange)}` : "N/A"} · Lag{" "}
+              {pulseLaggard ? `${pulseLaggard.symbol} ${formatPercent(pulseLaggard.percentChange)}` : "N/A"}
             </small>
-            <em>
-              Laggards {pulseLaggard ? `${pulseLaggard.symbol} ${formatPercent(pulseLaggard.percentChange)}` : "N/A"}
-            </em>
           </article>
-          <article className="home-orbit-card">
-            <p>Execution</p>
-            <h3>{topExecutionPlan ? `${topExecutionPlan.ticker} · ${topExecutionPlan.planScore}` : "--"}</h3>
-            <small>
-              {topExecutionPlan
-                ? `${formatCompactNumber(topExecutionPlan.plannedShares)} shares · RR ${topExecutionPlan.rr.toFixed(2)}`
-                : "No execution plan yet"}
-            </small>
-            <em>AI engine {aiEngineDisplay} · Sentinel {sentinelStatus.label}</em>
+          <article className="home-command-orbit-card">
+            <p>Cloud Memory</p>
+            <h3>{cloudSyncLabel}</h3>
+            <small>{cloudSyncState.detail}</small>
           </article>
         </div>
-        <div className="home-orbit-actions">
-          <button type="button" className="primary-action" onClick={runMarketScan} disabled={loadingData}>
-            <span>{loadingData ? "Scanning..." : "Run Market Scan"}</span>
-            <kbd>Shift+S</kbd>
-          </button>
-          <button type="button" className="ghost-action" onClick={refreshPulse} disabled={pulseLoading}>
-            <span>Refresh Pulse</span>
-            <kbd>Shift+P</kbd>
-          </button>
-          <button type="button" className="ghost-action" onClick={refreshNews} disabled={newsLoading}>
-            <span>Refresh News</span>
-            <kbd>Shift+N</kbd>
-          </button>
-          <button type="button" className="ghost-action" onClick={generateAiBrief} disabled={aiLoading}>
-            <span>Generate AI Brief</span>
-            <kbd>Shift+B</kbd>
-          </button>
-          <button type="button" className="ghost-action" onClick={() => stageExecutionPlanPosition(topExecutionPlan)} disabled={!topExecutionPlan?.canStage}>
-            <span>Stage Top Execution</span>
-            <kbd>Shift+X</kbd>
-          </button>
-          <button type="button" className="ghost-action" onClick={openCommandPalette}>
-            <span>Open Command Menu</span>
-            <kbd>Ctrl/Cmd+K</kbd>
-          </button>
-        </div>
-        <p className="home-orbit-footnote">
-          Home command lane: scan, pulse, intelligence, and execution are now sequenced in one fast surface.
-        </p>
       </motion.section>
 
       <section className="glass-card home-workspace-hub">
@@ -3518,17 +3521,9 @@ function App() {
             <span>{focusMode ? "Focus On" : "Focus Off"}</span>
           </div>
         </div>
-        <div className="home-workspace-grid" role="tablist" aria-label="Workspace tabs">
-          {workspaceTabs.map((tab) => {
-            const momentum =
-              tab.id === "market"
-                ? clamp(scanCoverage.available * 16 + (loadingData ? 8 : 0), 18, 100)
-                : tab.id === "intelligence"
-                ? clamp((aiInsight ? 68 : 26) + newsItems.length * 2, 18, 100)
-                : tab.id === "portfolio"
-                ? clamp((positions.length ? 44 : 24) + portfolioGuardrails.length * 10, 18, 100)
-                : clamp((backtestResult?.summary ? 72 : 28) + (backtestResult?.summary?.trades || 0) * 2, 18, 100);
-            return (
+        <div className="home-workspace-layout">
+          <div className="home-workspace-grid" role="tablist" aria-label="Workspace tabs">
+            {workspaceTabs.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
@@ -3543,11 +3538,40 @@ function App() {
                 </div>
                 <p>{tab.hint}</p>
                 <div className="home-workspace-meter">
-                  <span style={{ width: `${momentum}%` }} />
+                  <span style={{ width: `${workspaceMomentum[tab.id]}%` }} />
                 </div>
               </button>
-            );
-          })}
+            ))}
+          </div>
+          <aside className="home-workspace-aside">
+            <h3>Session Memory</h3>
+            <div className="home-workspace-aside-list">
+              <div>
+                <span>Cloud state</span>
+                <strong>{cloudSyncLabel}</strong>
+              </div>
+              <div>
+                <span>Universe</span>
+                <strong>{selectedTickers.slice(0, 4).join(", ") || "No symbols selected"}</strong>
+              </div>
+              <div>
+                <span>Risk profile</span>
+                <strong>{riskProfile}</strong>
+              </div>
+              <div>
+                <span>Strategy style</span>
+                <strong>{strategyStyle}</strong>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="ghost-action"
+              onClick={() => syncCloudProfileNow()}
+              disabled={cloudSyncState.status === "saving"}
+            >
+              {cloudSyncState.status === "saving" ? "Syncing..." : "Sync Cloud State"}
+            </button>
+          </aside>
         </div>
       </section>
 
