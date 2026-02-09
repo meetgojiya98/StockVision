@@ -279,6 +279,37 @@ body {
   color: #ff9a9a;
 }
 
+.deck-health-grid {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.deck-health-grid > div {
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 8px 10px;
+}
+
+.deck-health-grid span {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.deck-health-grid strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .search-form {
   position: relative;
   margin-top: 14px;
@@ -499,10 +530,20 @@ textarea {
   background: transparent;
 }
 
+.diagnostic-action {
+  border-color: color-mix(in oklab, var(--accent) 34%, var(--panel-border));
+}
+
 .error-text {
   margin: 12px 0 0;
   color: #ff8a8a;
   font-size: 0.9rem;
+}
+
+.scan-note {
+  margin: 10px 0 0;
+  color: var(--text-soft);
+  font-size: 0.88rem;
 }
 
 .pulse-list {
@@ -1353,6 +1394,7 @@ textarea {
   .control-row,
   .control-row-2,
   .control-row-3,
+  .deck-health-grid,
   .pulse-summary-grid,
   .pulse-list,
   .leader-laggard-grid,

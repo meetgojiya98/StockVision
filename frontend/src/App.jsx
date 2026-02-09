@@ -8,6 +8,7 @@ import {
   fetchMarketPulse,
   fetchQuoteMulti,
   fetchStockCandlesMulti,
+  getApiConnectionState,
   runBacktest,
   searchSymbols,
 } from "./api/client";
@@ -424,9 +425,11 @@ function App() {
   const [marketMeta, setMarketMeta] = useState(null);
   const [loadingData, setLoadingData] = useState(false);
   const [dataError, setDataError] = useState("");
+  const [scanNotice, setScanNotice] = useState("");
   const [lastRefresh, setLastRefresh] = useState(null);
   const [backendStatus, setBackendStatus] = useState("checking");
   const [backendDetails, setBackendDetails] = useState("");
+  const [backendEndpoint, setBackendEndpoint] = useState("");
   const [focusTicker, setFocusTicker] = useState(selectedTickers[0] || "");
   const scanInFlightRef = useRef(false);
 
@@ -523,25 +526,44 @@ function App() {
     });
   }, [backtestConfig?.ticker, focusTicker, selectedTickers, setBacktestConfig]);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const health = await fetchBackendHealth();
-        if (cancelled) return;
-        setBackendStatus("online");
-        const provider = health?.services?.marketDataProvider || "unknown";
-        setBackendDetails(`API online · provider: ${provider}`);
-      } catch (error) {
-        if (cancelled) return;
-        setBackendStatus("offline");
-        setBackendDetails(error.message || "Backend unavailable");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+  const updateBackendStatus = useCallback(({ providerHint, status = "online", message = "" } = {}) => {
+    const connection = getApiConnectionState();
+    const endpoint = connection.activeBase || connection.envBase || "";
+    setBackendEndpoint(endpoint);
+
+    if (status === "online") {
+      const provider = providerHint || "unknown";
+      const detail = message || `API online · provider: ${provider}${endpoint ? ` · ${endpoint}` : ""}`;
+      setBackendStatus("online");
+      setBackendDetails(detail);
+      return;
+    }
+
+    setBackendStatus(status);
+    setBackendDetails(message || "Backend unavailable");
   }, []);
+
+  const testBackendConnection = useCallback(async () => {
+    updateBackendStatus({ status: "checking", message: "Checking backend..." });
+    try {
+      const health = await fetchBackendHealth();
+      updateBackendStatus({
+        providerHint: health?.services?.marketDataProvider || "unknown",
+        status: "online",
+      });
+      return true;
+    } catch (error) {
+      updateBackendStatus({
+        status: "offline",
+        message: error.message || "Backend unavailable",
+      });
+      return false;
+    }
+  }, [updateBackendStatus]);
+
+  useEffect(() => {
+    testBackendConnection();
+  }, [testBackendConnection]);
 
   const addTicker = useCallback(
     (rawValue) => {
@@ -579,6 +601,7 @@ function App() {
     if (scanInFlightRef.current) return;
     if (!selectedTickers.length) {
       setDataError("Add at least one ticker to run a market scan.");
+      setScanNotice("");
       setMarketData({});
       return;
     }
@@ -586,22 +609,54 @@ function App() {
     scanInFlightRef.current = true;
     setLoadingData(true);
     setDataError("");
+    setScanNotice("");
     try {
       const response = await fetchStockCandlesMulti({
         tickers: selectedTickers,
         range,
       });
+      if (!response || typeof response !== "object" || !response.data || typeof response.data !== "object") {
+        throw new Error("Market scan returned an invalid payload. Use Test Backend and retry.");
+      }
+
       const normalized = normalizeScanResponse(response);
+      const availableEntries = Object.entries(normalized.data || {});
+      if (!availableEntries.length) {
+        throw new Error("Market scan returned no ticker data. Confirm backend health and selected range.");
+      }
+
       setMarketData(normalized.data || {});
       setMarketMeta(normalized.meta || null);
       setLastRefresh(new Date());
+      updateBackendStatus({
+        providerHint: response?.meta?.provider || "unknown",
+        status: "online",
+      });
+
+      const missingTickers = selectedTickers.filter((ticker) => !normalized.data[ticker]);
+      if (normalized.meta?.partial || missingTickers.length) {
+        const missingLabel = missingTickers.length ? ` (${missingTickers.join(", ")})` : "";
+        setScanNotice(
+          `Partial scan complete: ${availableEntries.length}/${selectedTickers.length} symbols updated${missingLabel}.`
+        );
+      } else {
+        setScanNotice(`Scan complete: ${availableEntries.length}/${selectedTickers.length} symbols updated.`);
+      }
     } catch (error) {
-      setDataError(error.message || "Unable to load market data.");
+      const message = error.message || "Unable to load market data.";
+      setDataError(message);
+      setScanNotice("");
+      if (message.includes("Unable to reach backend API")) {
+        updateBackendStatus({
+          status: "offline",
+          message,
+        });
+      }
     } finally {
       setLoadingData(false);
       scanInFlightRef.current = false;
     }
-  }, [range, selectedTickers]);
+  }, [range, selectedTickers, updateBackendStatus]);
 
   const refreshPulse = useCallback(async () => {
     setPulseLoading(true);
@@ -707,6 +762,15 @@ function App() {
       Object.entries(marketData).map(([ticker, payload]) => [ticker, payload?.candles || []])
     );
   }, [marketData]);
+
+  const scanCoverage = useMemo(() => {
+    const requested = selectedTickers.length;
+    const available = Object.keys(marketData || {}).length;
+    return {
+      requested,
+      available,
+    };
+  }, [marketData, selectedTickers.length]);
 
   const focusPayload = focusTicker ? marketData[focusTicker] : null;
   const focusMetrics = focusPayload?.metrics;
@@ -1107,6 +1171,22 @@ function App() {
           <p className={`backend-status ${backendStatus}`}>
             {backendDetails || (backendStatus === "checking" ? "Checking backend..." : "")}
           </p>
+          <div className="deck-health-grid">
+            <div>
+              <span>Endpoint</span>
+              <strong>{backendEndpoint || "--"}</strong>
+            </div>
+            <div>
+              <span>Coverage</span>
+              <strong>
+                {scanCoverage.available}/{scanCoverage.requested}
+              </strong>
+            </div>
+            <div>
+              <span>Last Scan</span>
+              <strong>{lastRefresh ? lastRefresh.toLocaleTimeString() : "--:--"}</strong>
+            </div>
+          </div>
 
           <form className="search-form" ref={suggestionsRef} onSubmit={handleSearchSubmit}>
             <input
@@ -1203,6 +1283,14 @@ function App() {
             <button type="button" className="primary-action" onClick={runMarketScan} disabled={loadingData}>
               {loadingData ? "Scanning..." : "Run Market Scan"}
             </button>
+            <button
+              type="button"
+              className="ghost-action diagnostic-action"
+              onClick={testBackendConnection}
+              disabled={backendStatus === "checking"}
+            >
+              {backendStatus === "checking" ? "Testing..." : "Test Backend"}
+            </button>
             <button type="button" className="ghost-action" onClick={refreshPulse} disabled={pulseLoading}>
               Refresh Pulse
             </button>
@@ -1215,6 +1303,7 @@ function App() {
           </div>
 
           {dataError && <p className="error-text">{dataError}</p>}
+          {scanNotice && !dataError && <p className="scan-note">{scanNotice}</p>}
           {pulseError && <p className="error-text">{pulseError}</p>}
           {newsError && <p className="error-text">{newsError}</p>}
           {marketMeta?.legacyMode && (

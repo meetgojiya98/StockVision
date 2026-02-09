@@ -39,11 +39,25 @@ function makeOptions(options = {}) {
   };
 }
 
+function isJsonContentType(contentType) {
+  return contentType.includes("application/json") || contentType.includes("+json");
+}
+
 function shouldTryNext(response, payload) {
   if (!response) return true;
   if (response.status === 404) return true;
   if (response.status === 502 && !payload?.error) return true;
   return false;
+}
+
+function formatFailureMessage(response, payload, rawText) {
+  if (payload?.error) return String(payload.error);
+  if (payload?.message) return String(payload.message);
+  if (rawText) {
+    const compact = String(rawText).replace(/\s+/g, " ").trim();
+    if (compact) return compact.slice(0, 140);
+  }
+  return `Request failed (${response.status})`;
 }
 
 async function request(path, options = {}, params = {}) {
@@ -55,14 +69,29 @@ async function request(path, options = {}, params = {}) {
 
     try {
       const response = await fetch(url, makeOptions(options));
-      const payload = await response.json().catch(() => null);
+      const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+      const expectsJson = isJsonContentType(contentType);
+      const payload = expectsJson ? await response.json().catch(() => null) : null;
+      const rawText = expectsJson ? "" : await response.text().catch(() => "");
 
       if (response.ok) {
+        if (!expectsJson || !payload || typeof payload !== "object") {
+          failures.push(
+            `${base}: invalid API payload (expected JSON, got ${contentType || "unknown content type"})`
+          );
+          continue;
+        }
         activeBase = base;
+        if (payload && !payload.__meta) {
+          payload.__meta = {};
+        }
+        if (payload?.__meta && typeof payload.__meta === "object") {
+          payload.__meta.base = base;
+        }
         return payload;
       }
 
-      const message = payload?.error || `Request failed (${response.status})`;
+      const message = formatFailureMessage(response, payload, rawText);
       if (shouldTryNext(response, payload)) {
         failures.push(`${base}: ${message}`);
         continue;
@@ -79,11 +108,19 @@ async function request(path, options = {}, params = {}) {
       "Unable to reach backend API.",
       "Start backend with `cd backend && npm start` or set `VITE_BACKEND_URL`.",
       `Tried: ${candidates.join(", ")}`,
-      failures.length ? `Failures: ${failures.slice(0, 3).join(" | ")}` : "",
+      failures.length ? `Failures: ${failures.slice(0, 5).join(" | ")}` : "",
     ]
       .filter(Boolean)
       .join(" ")
   );
+}
+
+export function getApiConnectionState() {
+  return {
+    activeBase,
+    envBase: ENV_BASE || null,
+    candidates: getBaseCandidates(),
+  };
 }
 
 export async function fetchBackendHealth() {
