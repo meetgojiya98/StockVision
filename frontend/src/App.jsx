@@ -232,6 +232,23 @@ function toFiniteNumber(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function formatTimeOnly(value) {
+  if (!value) return "--:--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--:--";
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function activityToneClass(kind) {
+  if (kind === "error") return "activity-error";
+  if (kind === "success") return "activity-success";
+  if (kind === "workspace") return "activity-workspace";
+  return "activity-neutral";
+}
+
 function average(values) {
   if (!values.length) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -488,6 +505,8 @@ function BrandLogo() {
 function App() {
   const [theme, setTheme] = usePersistentState("sv-theme", "day");
   const [activeWorkspace, setActiveWorkspace] = usePersistentState("sv-workspace-tab", "market");
+  const [focusMode, setFocusMode] = usePersistentState("sv-focus-mode", false);
+  const [activityFeed, setActivityFeed] = usePersistentState("sv-activity-feed", []);
   const [selectedTickers, setSelectedTickers] = usePersistentState("sv-selected-tickers", DEFAULT_TICKERS);
   const [range, setRange] = usePersistentState("sv-range", "3M");
   const [chartMode, setChartMode] = usePersistentState("sv-chart-mode", "candlestick");
@@ -510,6 +529,7 @@ function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
   const [commandPaletteIndex, setCommandPaletteIndex] = useState(0);
+  const lastWorkspaceRef = useRef(activeWorkspace);
 
   const [marketData, setMarketData] = useState({});
   const [marketMeta, setMarketMeta] = useState(null);
@@ -573,6 +593,32 @@ function App() {
     setCommandPaletteIndex(0);
   }, []);
 
+  const recordActivity = useCallback(
+    (kind, title, detail = "") => {
+      setActivityFeed((previous) =>
+        [
+          {
+            id: Date.now() + Math.random(),
+            kind,
+            title,
+            detail,
+            at: new Date().toISOString(),
+          },
+          ...(Array.isArray(previous) ? previous : []),
+        ].slice(0, 40)
+      );
+    },
+    [setActivityFeed]
+  );
+
+  const clearActivityFeed = useCallback(() => {
+    setActivityFeed([]);
+  }, [setActivityFeed]);
+
+  const toggleFocusMode = useCallback(() => {
+    setFocusMode((previous) => !previous);
+  }, [setFocusMode]);
+
   useEffect(() => {
     if (!Array.isArray(selectedTickers)) {
       setSelectedTickers(DEFAULT_TICKERS);
@@ -621,6 +667,13 @@ function App() {
   }, [commandPaletteOpen, commandPaletteQuery]);
 
   useEffect(() => {
+    if (lastWorkspaceRef.current === activeWorkspace) return;
+    const workspaceLabel = WORKSPACE_INFO[activeWorkspace]?.label || activeWorkspace;
+    recordActivity("workspace", `Switched to ${workspaceLabel}`, "Workspace context updated");
+    lastWorkspaceRef.current = activeWorkspace;
+  }, [activeWorkspace, recordActivity]);
+
+  useEffect(() => {
     if (selectedTickers.length === 0) {
       setFocusTicker("");
       return;
@@ -665,19 +718,22 @@ function App() {
     updateBackendStatus({ status: "checking", message: "Checking backend..." });
     try {
       const health = await fetchBackendHealth();
+      const provider = health?.services?.marketDataProvider || "unknown";
       updateBackendStatus({
-        providerHint: health?.services?.marketDataProvider || "unknown",
+        providerHint: provider,
         status: "online",
       });
+      recordActivity("success", "Backend connected", `Provider: ${provider}`);
       return true;
     } catch (error) {
       updateBackendStatus({
         status: "offline",
         message: error.message || "Backend unavailable",
       });
+      recordActivity("error", "Backend offline", error.message || "Connectivity check failed");
       return false;
     }
-  }, [updateBackendStatus]);
+  }, [recordActivity, updateBackendStatus]);
 
   useEffect(() => {
     testBackendConnection();
@@ -694,28 +750,34 @@ function App() {
       setSearchText("");
       setSuggestions([]);
       setShowSuggestions(false);
+      recordActivity("success", `Added ${ticker}`, "Ticker added to active universe");
     },
-    [setSelectedTickers]
+    [recordActivity, setSelectedTickers]
   );
 
   const addTickerBatch = useCallback(
     (batchTickers) => {
       setSelectedTickers((previous) => {
         const merged = [...new Set([...previous, ...batchTickers.map(normalizeTicker).filter(Boolean)])];
+        const addedCount = Math.max(0, Math.min(8, merged.length) - previous.length);
+        if (addedCount > 0) {
+          recordActivity("success", "Applied basket preset", `${addedCount} symbols added`);
+        }
         return merged.slice(0, 8);
       });
     },
-    [setSelectedTickers]
+    [recordActivity, setSelectedTickers]
   );
 
   const removeTicker = useCallback(
     (tickerToRemove) => {
       setSelectedTickers((previous) => previous.filter((ticker) => ticker !== tickerToRemove));
+      recordActivity("neutral", `Removed ${tickerToRemove}`, "Ticker removed from active universe");
     },
-    [setSelectedTickers]
+    [recordActivity, setSelectedTickers]
   );
 
-  const runMarketScan = useCallback(async () => {
+  const runMarketScan = useCallback(async ({ source = "manual" } = {}) => {
     if (scanInFlightRef.current) return;
     if (!selectedTickers.length) {
       setDataError("Add at least one ticker to run a market scan.");
@@ -757,13 +819,30 @@ function App() {
         setScanNotice(
           `Partial scan complete: ${availableEntries.length}/${selectedTickers.length} symbols updated${missingLabel}.`
         );
+        if (source !== "auto" && source !== "boot") {
+          recordActivity(
+            "neutral",
+            "Partial market scan",
+            `${availableEntries.length}/${selectedTickers.length} symbols refreshed${missingLabel}`
+          );
+        }
       } else {
         setScanNotice(`Scan complete: ${availableEntries.length}/${selectedTickers.length} symbols updated.`);
+        if (source !== "auto" && source !== "boot") {
+          recordActivity(
+            "success",
+            "Market scan complete",
+            `${availableEntries.length} symbols updated for ${range}`
+          );
+        }
       }
     } catch (error) {
       const message = error.message || "Unable to load market data.";
       setDataError(message);
       setScanNotice("");
+      if (source !== "auto" && source !== "boot") {
+        recordActivity("error", "Market scan failed", message);
+      }
       if (message.includes("Unable to reach backend API")) {
         updateBackendStatus({
           status: "offline",
@@ -774,23 +853,34 @@ function App() {
       setLoadingData(false);
       scanInFlightRef.current = false;
     }
-  }, [range, selectedTickers, updateBackendStatus]);
+  }, [range, recordActivity, selectedTickers, updateBackendStatus]);
 
-  const refreshPulse = useCallback(async () => {
+  const refreshPulse = useCallback(async ({ source = "manual" } = {}) => {
     setPulseLoading(true);
     setPulseError("");
     try {
       const response = await fetchMarketPulse();
       setMarketPulse(response.data || []);
       setMarketPulseSummary(response.summary || null);
+      if (source !== "auto" && source !== "boot") {
+        recordActivity(
+          "success",
+          "Pulse refreshed",
+          `${(response.summary?.advancers || 0) + (response.summary?.decliners || 0)} movers tracked`
+        );
+      }
     } catch (error) {
-      setPulseError(error.message || "Unable to fetch market pulse.");
+      const message = error.message || "Unable to fetch market pulse.";
+      setPulseError(message);
+      if (source !== "auto" && source !== "boot") {
+        recordActivity("error", "Pulse refresh failed", message);
+      }
     } finally {
       setPulseLoading(false);
     }
-  }, []);
+  }, [recordActivity]);
 
-  const refreshNews = useCallback(async () => {
+  const refreshNews = useCallback(async ({ source = "manual" } = {}) => {
     setNewsLoading(true);
     setNewsError("");
     try {
@@ -800,12 +890,19 @@ function App() {
       });
       setNewsItems(response.data || []);
       setNewsMeta(response.meta || null);
+      if (source !== "auto" && source !== "boot") {
+        recordActivity("success", "News updated", `${response.data?.length || 0} headlines synced`);
+      }
     } catch (error) {
-      setNewsError(error.message || "Unable to fetch market news.");
+      const message = error.message || "Unable to fetch market news.";
+      setNewsError(message);
+      if (source !== "auto" && source !== "boot") {
+        recordActivity("error", "News refresh failed", message);
+      }
     } finally {
       setNewsLoading(false);
     }
-  }, [selectedTickers]);
+  }, [recordActivity, selectedTickers]);
 
   const refreshPortfolioQuotes = useCallback(async () => {
     const tickers = [...new Set(positions.map((position) => normalizeTicker(position.ticker)).filter(Boolean))];
@@ -823,9 +920,9 @@ function App() {
   }, [positions]);
 
   useEffect(() => {
-    runMarketScan();
-    refreshPulse();
-    refreshNews();
+    runMarketScan({ source: "boot" });
+    refreshPulse({ source: "boot" });
+    refreshNews({ source: "boot" });
   }, [runMarketScan, refreshPulse, refreshNews]);
 
   useEffect(() => {
@@ -835,9 +932,9 @@ function App() {
   useEffect(() => {
     if (!autoRefreshSec) return undefined;
     const timer = window.setInterval(() => {
-      runMarketScan();
-      refreshPulse();
-      refreshNews();
+      runMarketScan({ source: "auto" });
+      refreshPulse({ source: "auto" });
+      refreshNews({ source: "auto" });
       refreshPortfolioQuotes();
     }, Number(autoRefreshSec) * 1000);
     return () => window.clearInterval(timer);
@@ -992,6 +1089,59 @@ function App() {
     [backtestResult?.summary?.trades, newsItems.length, positions.length, selectedTickers.length]
   );
   const activeWorkspaceInfo = WORKSPACE_INFO[activeWorkspace] || WORKSPACE_INFO.market;
+  const activityStats = useMemo(() => {
+    const rows = Array.isArray(activityFeed) ? activityFeed : [];
+    const now = Date.now();
+    const dayAgo = now - 24 * 60 * 60 * 1000;
+    const recent = rows.filter((item) => Date.parse(item.at || "") >= dayAgo);
+    const scans = recent.filter((item) => String(item.title || "").toLowerCase().includes("scan")).length;
+    const briefs = recent.filter((item) => String(item.title || "").toLowerCase().includes("ai brief")).length;
+    return {
+      recentCount: recent.length,
+      scans,
+      briefs,
+    };
+  }, [activityFeed]);
+  const missionSteps = useMemo(
+    () => [
+      {
+        id: "universe",
+        label: "Assemble Universe",
+        detail: "Track at least 3 symbols.",
+        done: selectedTickers.length >= 3,
+      },
+      {
+        id: "scan",
+        label: "Run Market Scan",
+        detail: "Load scan metrics and chart data.",
+        done: scanCoverage.available > 0,
+      },
+      {
+        id: "intelligence",
+        label: "Generate AI Brief",
+        detail: "Build actionable tactical guidance.",
+        done: Boolean(aiInsight),
+      },
+      {
+        id: "portfolio",
+        label: "Build Portfolio Context",
+        detail: "Add at least one position to stress test.",
+        done: positions.length > 0,
+      },
+      {
+        id: "strategy",
+        label: "Validate Strategy",
+        detail: "Run a backtest and inspect outcomes.",
+        done: Boolean(backtestResult?.summary),
+      },
+    ],
+    [aiInsight, backtestResult?.summary, positions.length, scanCoverage.available, selectedTickers.length]
+  );
+  const missionProgress = useMemo(() => {
+    const completed = missionSteps.filter((step) => step.done).length;
+    return Math.round((completed / missionSteps.length) * 100);
+  }, [missionSteps]);
+  const activeMissionStep = missionSteps.find((step) => !step.done) || missionSteps.at(-1);
 
   const signalChecklist = useMemo(() => {
     if (!focusMetrics) return [];
@@ -1049,6 +1199,7 @@ function App() {
     link.download = `stockvision-scan-${Date.now()}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
+    recordActivity("success", "Exported scan snapshot", `${rows.length} rows saved to CSV`);
   };
 
   const runBacktestScenario = async () => {
@@ -1060,14 +1211,17 @@ function App() {
 
     if (!ticker) {
       setBacktestError("Select a ticker for backtesting.");
+      recordActivity("error", "Backtest blocked", "Ticker is required");
       return;
     }
     if (!Number.isFinite(fast) || !Number.isFinite(slow) || fast < 2 || slow < 3 || fast >= slow) {
       setBacktestError("Use valid fast/slow periods, with fast smaller than slow.");
+      recordActivity("error", "Backtest blocked", "Invalid fast/slow configuration");
       return;
     }
     if (!Number.isFinite(capital) || capital <= 0) {
       setBacktestError("Initial capital must be greater than zero.");
+      recordActivity("error", "Backtest blocked", "Initial capital must be greater than zero");
       return;
     }
 
@@ -1085,8 +1239,15 @@ function App() {
       setBacktestResult(response.data || null);
       setBacktestMeta(response.meta || null);
       setBacktestConfig((previous) => ({ ...previous, ticker }));
+      recordActivity(
+        "success",
+        "Backtest complete",
+        `${ticker} · return ${Number(response.data?.summary?.totalReturnPct || 0).toFixed(2)}%`
+      );
     } catch (error) {
-      setBacktestError(error.message || "Unable to run backtest.");
+      const message = error.message || "Unable to run backtest.";
+      setBacktestError(message);
+      recordActivity("error", "Backtest failed", message);
     } finally {
       setBacktestLoading(false);
     }
@@ -1095,6 +1256,7 @@ function App() {
   const generateAiBrief = useCallback(async () => {
     if (!focusTicker || !focusPayload) {
       setAiError("Run a market scan first, then select a focus ticker.");
+      recordActivity("error", "AI brief blocked", "Run a scan and select a focus ticker first");
       return;
     }
 
@@ -1133,12 +1295,19 @@ function App() {
           ...previous,
         ].slice(0, 8)
       );
+      recordActivity(
+        "success",
+        "AI brief generated",
+        `${focusTicker} · confidence ${Number(response.data?.confidence || 0).toFixed(0)}`
+      );
     } catch (error) {
-      setAiError(error.message || "Unable to generate AI brief.");
+      const message = error.message || "Unable to generate AI brief.";
+      setAiError(message);
+      recordActivity("error", "AI brief failed", message);
     } finally {
       setAiLoading(false);
     }
-  }, [aiPrompt, focusMetrics, focusPayload, focusTicker, pulseSummary, riskProfile, scannerProfile, setAiHistory, strategyStyle]);
+  }, [aiPrompt, focusMetrics, focusPayload, focusTicker, pulseSummary, recordActivity, riskProfile, scannerProfile, setAiHistory, strategyStyle]);
 
   const commandPaletteActions = useMemo(
     () => [
@@ -1221,6 +1390,22 @@ function App() {
         },
       },
       {
+        id: "toggle-focus",
+        label: focusMode ? "Disable Focus Mode" : "Enable Focus Mode",
+        description: "Reduce visual noise and keep only essential modules.",
+        shortcut: "Focus",
+        keywords: "focus mode distraction free",
+        run: () => toggleFocusMode(),
+      },
+      {
+        id: "clear-activity",
+        label: "Clear Activity Intelligence",
+        description: "Reset recent operator event history.",
+        shortcut: "Log",
+        keywords: "clear activity history feed",
+        run: () => clearActivityFeed(),
+      },
+      {
         id: "tab-market",
         label: "Switch Workspace: Market",
         description: "Scanner, pulse, chart arena, and signal matrix.",
@@ -1253,7 +1438,18 @@ function App() {
         run: () => setActiveWorkspace("strategy"),
       },
     ],
-    [generateAiBrief, refreshNews, refreshPulse, runBacktestScenario, runMarketScan, setActiveWorkspace, testBackendConnection]
+    [
+      clearActivityFeed,
+      focusMode,
+      generateAiBrief,
+      refreshNews,
+      refreshPulse,
+      runBacktestScenario,
+      runMarketScan,
+      setActiveWorkspace,
+      testBackendConnection,
+      toggleFocusMode,
+    ]
   );
 
   const filteredCommandActions = useMemo(() => {
@@ -1343,6 +1539,11 @@ function App() {
           setActiveWorkspace("strategy");
           return;
         }
+        if (key === "f") {
+          event.preventDefault();
+          toggleFocusMode();
+          return;
+        }
       }
 
       if (editable || event.repeat) return;
@@ -1377,6 +1578,7 @@ function App() {
     refreshPulse,
     runMarketScan,
     setActiveWorkspace,
+    toggleFocusMode,
   ]);
 
   const handleAddPosition = (event) => {
@@ -1412,6 +1614,7 @@ function App() {
     });
 
     setPositionForm({ ticker: "", shares: "", avgCost: "" });
+    recordActivity("success", `Position updated: ${ticker}`, `${shares} shares @ ${formatCurrency(avgCost)}`);
   };
 
   const basePortfolioRows = useMemo(() => {
@@ -1513,7 +1716,7 @@ function App() {
   const curveRange = Math.max(1, curveMax - curveMin);
 
   return (
-    <div className="app-shell" data-workspace={activeWorkspace}>
+    <div className="app-shell" data-workspace={activeWorkspace} data-focus={focusMode ? "on" : "off"}>
       <div className="ambient-backdrop" aria-hidden="true">
         <span className="orb orb-a" />
         <span className="orb orb-b" />
@@ -1550,10 +1753,14 @@ function App() {
             <span className="status-chip status-neutral">
               Auto {autoRefreshSec ? `${autoRefreshSec}s` : "manual"}
             </span>
+            <span className="status-chip status-neutral">Mission {missionProgress}%</span>
           </div>
           <button type="button" className="command-launch" onClick={openCommandPalette}>
             <span>Command Menu</span>
             <kbd>Ctrl/Cmd+K</kbd>
+          </button>
+          <button type="button" className="focus-toggle" onClick={toggleFocusMode}>
+            {focusMode ? "Exit Focus" : "Focus Mode"}
           </button>
           <button
             type="button"
@@ -1671,6 +1878,76 @@ function App() {
               <em>{tab.stat}</em>
             </button>
           ))}
+        </div>
+      </section>
+
+      <section className="command-intel-grid workspace-section">
+        <div className="glass-card mission-panel">
+          <div className="section-head inline">
+            <div>
+              <h2>Mission Control</h2>
+              <p>Drive the workflow from universe setup to validated strategy.</p>
+            </div>
+            <strong className="mission-progress">{missionProgress}%</strong>
+          </div>
+          <div className="mission-track">
+            <span style={{ width: `${missionProgress}%` }} />
+          </div>
+          <p className="mission-current">
+            Active step: <strong>{activeMissionStep?.label || "Complete workflow"}</strong>
+          </p>
+          <div className="mission-list">
+            {missionSteps.map((step, index) => (
+              <div key={step.id} className={`mission-item ${step.done ? "done" : ""}`}>
+                <span>{step.done ? "Done" : `${index + 1}`}</span>
+                <div>
+                  <p>{step.label}</p>
+                  <small>{step.detail}</small>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="glass-card activity-panel">
+          <div className="section-head inline">
+            <div>
+              <h2>Activity Intelligence</h2>
+              <p>Recent operator events and execution telemetry.</p>
+            </div>
+            <button type="button" className="ghost-action" onClick={clearActivityFeed}>
+              Clear Log
+            </button>
+          </div>
+          <div className="activity-stats">
+            <div>
+              <span>24h events</span>
+              <strong>{activityStats.recentCount}</strong>
+            </div>
+            <div>
+              <span>Scans</span>
+              <strong>{activityStats.scans}</strong>
+            </div>
+            <div>
+              <span>AI briefs</span>
+              <strong>{activityStats.briefs}</strong>
+            </div>
+          </div>
+          <div className="activity-list">
+            {(activityFeed || []).slice(0, 7).map((event) => (
+              <div key={event.id} className="activity-item">
+                <span className={`activity-dot ${activityToneClass(event.kind)}`} />
+                <div>
+                  <p>{event.title}</p>
+                  <small>{event.detail || "No detail"}</small>
+                </div>
+                <time>{formatTimeOnly(event.at)}</time>
+              </div>
+            ))}
+            {(!activityFeed || activityFeed.length === 0) && (
+              <p className="hint-text">No activity yet. Run a scan or open the command menu to begin.</p>
+            )}
+          </div>
         </div>
       </section>
 
