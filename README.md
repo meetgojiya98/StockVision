@@ -5,6 +5,8 @@ StockVision X is a full-stack stock intelligence app with:
 - Multi-ticker charting (candles + line mode)
 - Range-based market scans with derived technical metrics
 - Live market pulse board
+- Market news radar (free public feed, no key)
+- SMA strategy backtesting lab
 - AI strategy copilot (OpenAI-powered with heuristic fallback)
 - Portfolio lab with scenario shock testing
 
@@ -17,7 +19,7 @@ StockVision X is a full-stack stock intelligence app with:
 
 ### Backend (`/Users/meetgojiya/Downloads/StockVision/backend/.env`)
 
-- `TWELVE_DATA_API_KEY` (required for market data endpoints)
+- `MARKET_DATA_PROVIDER` (optional, defaults to `yahoo-finance`)
 - `OPENAI_API_KEY` (optional; enables LLM-generated strategy briefs)
 - `OPENAI_MODEL` (optional, defaults to `gpt-4o-mini`)
 - `PORT` (optional, defaults to `4000`)

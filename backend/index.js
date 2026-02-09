@@ -5,26 +5,37 @@ const fetch = require("node-fetch");
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
-const TWELVE_DATA_API_KEY = process.env.TWELVE_DATA_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const MARKET_DATA_PROVIDER = process.env.MARKET_DATA_PROVIDER || "yahoo-finance";
+const YAHOO_BASE_URL = "https://query1.finance.yahoo.com";
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
-if (!TWELVE_DATA_API_KEY) {
-  console.warn("TWELVE_DATA_API_KEY is not configured. Market data endpoints will return errors.");
-}
-
 const cache = new Map();
 const RANGE_CONFIG = {
-  "1D": { interval: "5min", outputsize: 96 },
-  "5D": { interval: "15min", outputsize: 130 },
-  "1M": { interval: "1h", outputsize: 180 },
-  "3M": { interval: "1day", outputsize: 90 },
-  "6M": { interval: "1day", outputsize: 180 },
-  "1Y": { interval: "1day", outputsize: 260 },
+  "1D": { interval: "5m", range: "1d", outputsize: 96 },
+  "5D": { interval: "15m", range: "5d", outputsize: 130 },
+  "1M": { interval: "60m", range: "1mo", outputsize: 180 },
+  "3M": { interval: "1d", range: "3mo", outputsize: 90 },
+  "6M": { interval: "1d", range: "6mo", outputsize: 180 },
+  "1Y": { interval: "1d", range: "1y", outputsize: 260 },
 };
+const RANGE_TO_DAYS = {
+  "1d": 2,
+  "5d": 7,
+  "1mo": 35,
+  "3mo": 100,
+  "6mo": 200,
+  "1y": 370,
+  "2y": 740,
+  "5y": 1900,
+  "10y": 3800,
+  ytd: 380,
+  max: 10000,
+};
+const VALID_QUOTE_TYPES = new Set(["EQUITY", "ETF", "MUTUALFUND", "INDEX", "CRYPTOCURRENCY"]);
 
 function getCached(key) {
   const entry = cache.get(key);
@@ -45,18 +56,17 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function normalizeTicker(value) {
-  return String(value || "").trim().toUpperCase();
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
-function requireDataApiKey(res) {
-  if (!TWELVE_DATA_API_KEY) {
-    res.status(500).json({
-      error: "TWELVE_DATA_API_KEY is not configured on the backend.",
-    });
-    return false;
-  }
-  return true;
+function average(values) {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function normalizeTicker(value) {
+  return String(value || "").trim().toUpperCase();
 }
 
 function parseOpenAiJson(content) {
@@ -68,32 +78,366 @@ function parseOpenAiJson(content) {
   }
 }
 
-function buildTwelveDataUrl(path, params = {}) {
-  const query = new URLSearchParams({
-    ...params,
-    apikey: TWELVE_DATA_API_KEY,
-    format: "JSON",
+function buildYahooUrl(path, params = {}) {
+  const url = new URL(`${YAHOO_BASE_URL}${path}`);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    url.searchParams.set(key, String(value));
   });
-  return `https://api.twelvedata.com/${path}?${query.toString()}`;
+  return url.toString();
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url);
-  const payload = await response.json().catch(() => null);
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "StockVision/1.0",
+      Accept: "application/json, text/plain, */*",
+    },
+  });
+  const contentType = response.headers.get("content-type") || "";
+  let payload;
+  if (contentType.includes("application/json")) {
+    payload = await response.json().catch(() => null);
+  } else {
+    const text = await response.text();
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = text;
+    }
+  }
+
   if (!response.ok) {
-    const message = payload?.message || response.statusText || "Request failed";
+    const message =
+      payload?.chart?.error?.description ||
+      payload?.error?.description ||
+      payload?.error?.message ||
+      payload?.message ||
+      response.statusText ||
+      "Market data request failed";
     throw new Error(message);
   }
+
   return payload;
 }
 
-async function fetchFromTwelveData(path, params) {
-  const url = buildTwelveDataUrl(path, params);
-  const payload = await fetchJson(url);
-  if (payload?.status === "error") {
-    throw new Error(payload.message || "Twelve Data request failed");
+function intervalToMinutes(interval) {
+  const input = String(interval || "").trim();
+  if (input.endsWith("m")) return toNumber(input.slice(0, -1));
+  if (input.endsWith("h")) return toNumber(input.slice(0, -1)) * 60;
+  if (input.endsWith("d")) return toNumber(input.slice(0, -1)) * 60 * 24;
+  if (input.endsWith("wk")) return toNumber(input.replace("wk", "")) * 60 * 24 * 7;
+  return 60 * 24;
+}
+
+function mapOutputsizeToRange(interval, outputsize) {
+  const minutes = intervalToMinutes(interval);
+  const totalDays = (minutes * Math.max(1, Number(outputsize) || 1)) / (60 * 24);
+  if (totalDays <= 1.2) return "1d";
+  if (totalDays <= 5.5) return "5d";
+  if (totalDays <= 30) return "1mo";
+  if (totalDays <= 90) return "3mo";
+  if (totalDays <= 180) return "6mo";
+  if (totalDays <= 365) return "1y";
+  if (totalDays <= 730) return "2y";
+  return "5y";
+}
+
+function rangeToOutputsize(range, interval) {
+  const days = RANGE_TO_DAYS[range] || 100;
+  const minutes = intervalToMinutes(interval);
+  const bars = Math.floor((days * 24 * 60) / Math.max(1, minutes));
+  return Math.max(20, Math.min(3000, bars));
+}
+
+function resolveRangeConfig(range, interval, outputsize) {
+  if (interval && outputsize) {
+    const rangeFromOutput = mapOutputsizeToRange(interval, outputsize);
+    return {
+      interval,
+      range: rangeFromOutput,
+      outputsize: Number(outputsize),
+      label: "custom",
+    };
   }
-  return payload;
+
+  const selectedRange = String(range || "3M").toUpperCase();
+  const fallback = RANGE_CONFIG[selectedRange] || RANGE_CONFIG["3M"];
+  return {
+    interval: fallback.interval,
+    range: fallback.range,
+    outputsize: fallback.outputsize,
+    label: selectedRange,
+  };
+}
+
+function formatTimestampToCandleDate(unixTs) {
+  const date = new Date(unixTs * 1000);
+  const iso = date.toISOString();
+  return {
+    date: iso.slice(0, 10),
+    datetime: iso.slice(0, 19).replace("T", " "),
+  };
+}
+
+function trimCandlesByRange(candles, range) {
+  const days = RANGE_TO_DAYS[range] || 365;
+  const from = Date.now() - days * 24 * 60 * 60 * 1000;
+  return candles.filter((candle) => Date.parse(candle.date) >= from);
+}
+
+async function fetchYahooChart(symbol, interval, range) {
+  const url = buildYahooUrl(`/v8/finance/chart/${encodeURIComponent(symbol)}`, {
+    interval,
+    range,
+    includePrePost: "false",
+    events: "div,splits",
+  });
+  const payload = await fetchJson(url);
+  const error = payload?.chart?.error;
+  if (error) {
+    throw new Error(error.description || error.message || `Chart request failed for ${symbol}`);
+  }
+
+  const result = payload?.chart?.result?.[0];
+  if (!result || !Array.isArray(result.timestamp)) {
+    throw new Error(`No chart data returned for ${symbol}`);
+  }
+
+  const quote = result?.indicators?.quote?.[0] || {};
+  const candles = [];
+
+  result.timestamp.forEach((timestamp, index) => {
+    const close = toNumber(quote.close?.[index]);
+    const open = toNumber(quote.open?.[index]);
+    const high = toNumber(quote.high?.[index]);
+    const low = toNumber(quote.low?.[index]);
+    if (!close || !open || !high || !low) return;
+    const { date, datetime } = formatTimestampToCandleDate(timestamp);
+    candles.push({
+      date,
+      datetime,
+      open,
+      high,
+      low,
+      close,
+      volume: toNumber(quote.volume?.[index]),
+    });
+  });
+
+  if (!candles.length) {
+    throw new Error(`Chart returned empty candles for ${symbol}`);
+  }
+
+  return candles;
+}
+
+function mapToStooqSymbol(symbol) {
+  const normalized = String(symbol || "").trim().toLowerCase();
+  if (normalized.includes(".")) return normalized;
+  if (/^[a-z0-9-]{1,8}$/.test(normalized)) return `${normalized}.us`;
+  return normalized;
+}
+
+async function fetchStooqDaily(symbol, range) {
+  const stooqSymbol = mapToStooqSymbol(symbol);
+  const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "StockVision/1.0",
+      Accept: "text/csv, text/plain, */*",
+    },
+  });
+  const text = await response.text();
+  if (!response.ok || /No data/i.test(text)) {
+    throw new Error(`No fallback data available for ${symbol}`);
+  }
+
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length <= 1) {
+    throw new Error(`No fallback rows for ${symbol}`);
+  }
+
+  const candles = lines
+    .slice(1)
+    .map((line) => {
+      const [date, open, high, low, close, volume] = line.split(",");
+      return {
+        date: String(date || ""),
+        datetime: `${String(date || "")} 00:00:00`,
+        open: toNumber(open),
+        high: toNumber(high),
+        low: toNumber(low),
+        close: toNumber(close),
+        volume: toNumber(volume),
+      };
+    })
+    .filter((item) => item.close > 0)
+    .sort((left, right) => Date.parse(left.date) - Date.parse(right.date));
+
+  return trimCandlesByRange(candles, range);
+}
+
+async function fetchCandles(symbol, interval, range) {
+  try {
+    return await fetchYahooChart(symbol, interval, range);
+  } catch (primaryError) {
+    if (interval === "1d") {
+      try {
+        return await fetchStooqDaily(symbol, range);
+      } catch {
+        throw primaryError;
+      }
+    }
+    throw primaryError;
+  }
+}
+
+function buildEmptyQuote(symbol) {
+  return {
+    symbol,
+    price: 0,
+    change: 0,
+    percentChange: 0,
+    open: 0,
+    high: 0,
+    low: 0,
+    previousClose: 0,
+    volume: 0,
+    currency: "USD",
+    exchange: "Unknown",
+  };
+}
+
+function parseQuoteFromChart(symbol, payload) {
+  const result = payload?.chart?.result?.[0];
+  if (!result) return buildEmptyQuote(symbol);
+
+  const meta = result.meta || {};
+  const quote = result.indicators?.quote?.[0] || {};
+  const closes = (quote.close || []).map(toNumber).filter((value) => value > 0);
+  const opens = (quote.open || []).map(toNumber).filter((value) => value > 0);
+  const highs = (quote.high || []).map(toNumber).filter((value) => value > 0);
+  const lows = (quote.low || []).map(toNumber).filter((value) => value > 0);
+  const volumes = (quote.volume || []).map(toNumber).filter((value) => value >= 0);
+
+  const price =
+    closes.at(-1) ||
+    toNumber(meta.regularMarketPrice) ||
+    toNumber(meta.currentTradingPeriod?.regular?.close) ||
+    0;
+  const previousClose =
+    toNumber(meta.previousClose) ||
+    toNumber(meta.chartPreviousClose) ||
+    closes[0] ||
+    price ||
+    0;
+  const change = price - previousClose;
+  const percentChange = previousClose ? (change / previousClose) * 100 : 0;
+
+  return {
+    symbol,
+    price,
+    change,
+    percentChange,
+    open: opens[0] || toNumber(meta.regularMarketOpen) || previousClose,
+    high: highs.length ? Math.max(...highs) : toNumber(meta.regularMarketDayHigh) || price,
+    low: lows.length ? Math.min(...lows) : toNumber(meta.regularMarketDayLow) || price,
+    previousClose,
+    volume: volumes.reduce((sum, value) => sum + value, 0),
+    currency: meta.currency || "USD",
+    exchange: meta.exchangeName || "Unknown",
+  };
+}
+
+async function fetchQuoteForSymbol(symbol) {
+  const url = buildYahooUrl(`/v8/finance/chart/${encodeURIComponent(symbol)}`, {
+    interval: "5m",
+    range: "1d",
+    includePrePost: "false",
+  });
+  const payload = await fetchJson(url);
+  const error = payload?.chart?.error;
+  if (error) {
+    throw new Error(error.description || error.message || `Quote unavailable for ${symbol}`);
+  }
+  return parseQuoteFromChart(symbol, payload);
+}
+
+async function fetchQuoteMap(symbols) {
+  const uniqueSymbols = [...new Set(symbols.map(normalizeTicker).filter(Boolean))];
+  if (!uniqueSymbols.length) return {};
+
+  const results = await Promise.all(
+    uniqueSymbols.map(async (symbol) => {
+      try {
+        const quote = await fetchQuoteForSymbol(symbol);
+        return [symbol, quote];
+      } catch (error) {
+        return [symbol, buildEmptyQuote(symbol)];
+      }
+    })
+  );
+
+  return Object.fromEntries(results);
+}
+
+async function searchSymbolsYahoo(query) {
+  const url = buildYahooUrl("/v1/finance/search", {
+    q: query,
+    quotesCount: 20,
+    newsCount: 0,
+    enableFuzzyQuery: "true",
+  });
+  const payload = await fetchJson(url);
+  const quotes = Array.isArray(payload?.quotes) ? payload.quotes : [];
+
+  return quotes
+    .filter((item) => item.symbol)
+    .filter((item) => !item.symbol.includes("="))
+    .filter((item) => {
+      if (!item.quoteType) return true;
+      return VALID_QUOTE_TYPES.has(String(item.quoteType).toUpperCase());
+    })
+    .slice(0, 15)
+    .map((item) => ({
+      symbol: normalizeTicker(item.symbol),
+      name: item.shortname || item.longname || item.symbol,
+      exchange: item.exchDisp || item.exchange || "Unknown",
+      country: item.region || "Unknown",
+      currency: item.currency || "USD",
+      type: item.quoteType || "Unknown",
+    }));
+}
+
+async function fetchYahooNews(query, count = 10) {
+  const url = buildYahooUrl("/v1/finance/search", {
+    q: query,
+    quotesCount: 0,
+    newsCount: count,
+    enableFuzzyQuery: "true",
+  });
+  const payload = await fetchJson(url);
+  return Array.isArray(payload?.news) ? payload.news : [];
+}
+
+function normalizeNewsItem(item, sourceQuery) {
+  const publishedUnix = toNumber(item?.providerPublishTime || item?.providerPublishTimeUtc);
+  return {
+    id: String(item?.uuid || `${sourceQuery}-${item?.title || "headline"}`),
+    title: String(item?.title || "Untitled"),
+    publisher: String(item?.publisher || "Unknown"),
+    link: String(item?.link || ""),
+    sourceQuery,
+    relatedTickers: Array.isArray(item?.relatedTickers)
+      ? item.relatedTickers.map(normalizeTicker).filter(Boolean)
+      : [],
+    publishedAt: publishedUnix
+      ? new Date(publishedUnix * 1000).toISOString()
+      : new Date().toISOString(),
+    publishedUnix,
+    thumbnail: item?.thumbnail?.resolutions?.[0]?.url || null,
+  };
 }
 
 function computeSma(values, period) {
@@ -151,15 +495,6 @@ function classifyMomentum(rsi) {
   if (rsi >= 55) return "Positive";
   if (rsi <= 45) return "Negative";
   return "Neutral";
-}
-
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function average(values) {
-  if (!values.length) return 0;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function computeAtr(candles, period = 14) {
@@ -372,7 +707,7 @@ function deriveMetrics(candles) {
   const changePct = ((lastClose - prevClose) / prevClose) * 100;
   const high = Math.max(...highs);
   const low = Math.min(...lows);
-  const avgVolume = volumes.reduce((acc, value) => acc + value, 0) / volumes.length;
+  const avgVolume = average(volumes);
   const dailyReturns = closes
     .slice(1)
     .map((close, index) => (close - closes[index]) / closes[index])
@@ -593,57 +928,135 @@ async function buildOpenAiInsight({ ticker, candles, metrics, riskProfile, quest
   };
 }
 
-function resolveRangeConfig(range, interval, outputsize) {
-  if (interval && outputsize) {
-    return { interval, outputsize: Number(outputsize), label: "custom" };
-  }
-
-  const selectedRange = String(range || "3M").toUpperCase();
-  const fallback = RANGE_CONFIG[selectedRange] || RANGE_CONFIG["3M"];
-  return {
-    interval: fallback.interval,
-    outputsize: fallback.outputsize,
-    label: selectedRange,
-  };
-}
-
-async function fetchCandles(symbol, interval, outputsize) {
-  const payload = await fetchFromTwelveData("time_series", {
-    symbol,
-    interval,
-    outputsize,
-    order: "ASC",
+function buildSmaSeries(closes, period) {
+  let rolling = 0;
+  return closes.map((value, index) => {
+    rolling += value;
+    if (index >= period) rolling -= closes[index - period];
+    if (index < period - 1) return null;
+    return rolling / period;
   });
-
-  if (!Array.isArray(payload?.values)) {
-    throw new Error(`No candle data returned for ${symbol}.`);
-  }
-
-  return payload.values
-    .slice()
-    .map((value) => ({
-      date: String(value.datetime).split(" ")[0],
-      datetime: String(value.datetime),
-      open: toNumber(value.open),
-      high: toNumber(value.high),
-      low: toNumber(value.low),
-      close: toNumber(value.close),
-      volume: toNumber(value.volume),
-    }))
-    .filter((item) => item.close > 0);
 }
 
-async function fetchQuote(symbol) {
-  const payload = await fetchFromTwelveData("quote", { symbol });
+function calculateCurveMaxDrawdown(curve) {
+  if (!curve.length) return 0;
+  let peak = curve[0].value;
+  let maxDrawdown = 0;
+  curve.forEach((point) => {
+    if (point.value > peak) peak = point.value;
+    const drawdown = ((point.value - peak) / peak) * 100;
+    if (drawdown < maxDrawdown) maxDrawdown = drawdown;
+  });
+  return Math.abs(maxDrawdown);
+}
+
+function runSmaCrossoverBacktest({
+  candles,
+  fastPeriod,
+  slowPeriod,
+  initialCapital,
+  feeBps,
+}) {
+  const closes = candles.map((candle) => candle.close);
+  const fastSeries = buildSmaSeries(closes, fastPeriod);
+  const slowSeries = buildSmaSeries(closes, slowPeriod);
+  const feeRate = Math.max(0, feeBps) / 10000;
+
+  let cash = initialCapital;
+  let shares = 0;
+  let inPosition = false;
+  let entryValue = 0;
+
+  const trades = [];
+  const equityCurve = [];
+
+  for (let index = 1; index < candles.length; index += 1) {
+    const close = closes[index];
+    const date = candles[index].date;
+    const prevFast = fastSeries[index - 1];
+    const prevSlow = slowSeries[index - 1];
+    const fast = fastSeries[index];
+    const slow = slowSeries[index];
+    const canSignal =
+      prevFast !== null &&
+      prevSlow !== null &&
+      fast !== null &&
+      slow !== null;
+
+    if (canSignal && !inPosition && prevFast <= prevSlow && fast > slow) {
+      const fee = cash * feeRate;
+      const spendable = Math.max(0, cash - fee);
+      shares = spendable / close;
+      cash = 0;
+      inPosition = true;
+      entryValue = spendable + fee;
+      trades.push({
+        type: "BUY",
+        date,
+        price: Number(close.toFixed(2)),
+        shares: Number(shares.toFixed(4)),
+        fee: Number(fee.toFixed(2)),
+      });
+    } else if (canSignal && inPosition && prevFast >= prevSlow && fast < slow) {
+      const gross = shares * close;
+      const fee = gross * feeRate;
+      const net = gross - fee;
+      const pnl = net - entryValue;
+      cash = net;
+      shares = 0;
+      inPosition = false;
+      trades.push({
+        type: "SELL",
+        date,
+        price: Number(close.toFixed(2)),
+        fee: Number(fee.toFixed(2)),
+        pnl: Number(pnl.toFixed(2)),
+      });
+    }
+
+    const equity = cash + shares * close;
+    equityCurve.push({
+      date,
+      value: Number(equity.toFixed(2)),
+      close: Number(close.toFixed(2)),
+    });
+  }
+
+  const finalValue = equityCurve.at(-1)?.value || initialCapital;
+  const firstClose = closes[0] || 1;
+  const lastClose = closes.at(-1) || firstClose;
+  const buyHoldReturnPct = ((lastClose - firstClose) / firstClose) * 100;
+  const totalReturnPct = ((finalValue - initialCapital) / initialCapital) * 100;
+  const closedTrades = trades.filter((trade) => trade.type === "SELL");
+  const wins = closedTrades.filter((trade) => trade.pnl > 0).length;
+  const losses = closedTrades.filter((trade) => trade.pnl <= 0).length;
+  const winRate = closedTrades.length ? (wins / closedTrades.length) * 100 : 0;
+  const maxDrawdown = calculateCurveMaxDrawdown(equityCurve);
+
+  const days =
+    (Date.parse(candles.at(-1)?.date || "") - Date.parse(candles[0]?.date || "")) /
+    (24 * 60 * 60 * 1000);
+  const years = days > 0 ? days / 365 : 0;
+  const cagrPct =
+    years > 0 ? (Math.pow(finalValue / initialCapital, 1 / years) - 1) * 100 : totalReturnPct;
+
   return {
-    symbol,
-    price: toNumber(payload.close || payload.price),
-    change: toNumber(payload.change),
-    percentChange: toNumber(payload.percent_change),
-    open: toNumber(payload.open),
-    high: toNumber(payload.high),
-    low: toNumber(payload.low),
-    previousClose: toNumber(payload.previous_close),
+    summary: {
+      initialCapital: Number(initialCapital.toFixed(2)),
+      finalValue: Number(finalValue.toFixed(2)),
+      totalReturnPct: Number(totalReturnPct.toFixed(2)),
+      buyHoldReturnPct: Number(buyHoldReturnPct.toFixed(2)),
+      alphaPct: Number((totalReturnPct - buyHoldReturnPct).toFixed(2)),
+      maxDrawdownPct: Number(maxDrawdown.toFixed(2)),
+      trades: closedTrades.length,
+      wins,
+      losses,
+      winRatePct: Number(winRate.toFixed(2)),
+      cagrPct: Number(cagrPct.toFixed(2)),
+      inPosition,
+    },
+    equityCurve: equityCurve.slice(-260),
+    trades: trades.slice(-100),
   };
 }
 
@@ -652,7 +1065,8 @@ app.get("/api/health", (_req, res) => {
     ok: true,
     timestamp: new Date().toISOString(),
     services: {
-      marketData: Boolean(TWELVE_DATA_API_KEY),
+      marketData: true,
+      marketDataProvider: MARKET_DATA_PROVIDER,
       ai: Boolean(OPENAI_API_KEY),
     },
   });
@@ -663,30 +1077,15 @@ app.get("/api/symbol-search", async (req, res) => {
   if (query.length < 1) {
     return res.status(400).json({ error: "query is required" });
   }
-  if (!requireDataApiKey(res)) return;
 
   const cacheKey = `symbol-search:${query.toLowerCase()}`;
   const cached = getCached(cacheKey);
   if (cached) return res.json({ data: cached, cached: true });
 
   try {
-    const payload = await fetchFromTwelveData("symbol_search", {
-      symbol: query,
-      outputsize: 15,
-    });
-    const data = Array.isArray(payload.data)
-      ? payload.data.map((item) => ({
-          symbol: normalizeTicker(item.symbol),
-          name: item.instrument_name || item.name || item.symbol,
-          exchange: item.exchange || "Unknown",
-          country: item.country || "Unknown",
-          currency: item.currency || "USD",
-          type: item.type || "Stock",
-        }))
-      : [];
-
+    const data = await searchSymbolsYahoo(query);
     setCached(cacheKey, data, 10 * 60 * 1000);
-    res.json({ data, cached: false });
+    res.json({ data, cached: false, provider: MARKET_DATA_PROVIDER });
   } catch (error) {
     console.error("symbol-search error", error);
     res.status(500).json({ error: error.message || "Failed to search symbols" });
@@ -698,24 +1097,39 @@ app.post("/api/stock-candles-multi", async (req, res) => {
   if (!Array.isArray(tickers) || tickers.length === 0) {
     return res.status(400).json({ error: "tickers must be a non-empty array" });
   }
-  if (!requireDataApiKey(res)) return;
 
   const normalizedTickers = [...new Set(tickers.map(normalizeTicker).filter(Boolean))].slice(0, 8);
   const rangeConfig = resolveRangeConfig(range, interval, outputsize);
 
   try {
     const data = {};
+    const errors = {};
+
     for (const ticker of normalizedTickers) {
-      const cacheKey = `candles:${ticker}:${rangeConfig.interval}:${rangeConfig.outputsize}`;
+      const cacheKey = `candles:${ticker}:${rangeConfig.interval}:${rangeConfig.range}`;
       let candles = getCached(cacheKey);
       if (!candles) {
-        candles = await fetchCandles(ticker, rangeConfig.interval, rangeConfig.outputsize);
-        setCached(cacheKey, candles, 4 * 60 * 1000);
+        try {
+          candles = await fetchCandles(ticker, rangeConfig.interval, rangeConfig.range);
+          setCached(cacheKey, candles, 4 * 60 * 1000);
+        } catch (tickerError) {
+          errors[ticker] = tickerError.message;
+          continue;
+        }
       }
+
       data[ticker] = {
         candles,
         metrics: deriveMetrics(candles),
       };
+    }
+
+    const availableTickers = Object.keys(data);
+    if (availableTickers.length === 0) {
+      return res.status(502).json({
+        error: "Failed to fetch data for requested tickers.",
+        details: errors,
+      });
     }
 
     const leaderboard = Object.entries(data)
@@ -737,10 +1151,15 @@ app.post("/api/stock-candles-multi", async (req, res) => {
     res.json({
       meta: {
         interval: rangeConfig.interval,
-        outputsize: rangeConfig.outputsize,
+        outputsize:
+          rangeConfig.outputsize ||
+          rangeToOutputsize(rangeConfig.range, rangeConfig.interval),
         range: rangeConfig.label,
+        provider: MARKET_DATA_PROVIDER,
         leaderboard,
         correlations,
+        partial: availableTickers.length !== normalizedTickers.length,
+        errors,
       },
       data,
     });
@@ -755,22 +1174,28 @@ app.post("/api/quote-multi", async (req, res) => {
   if (!Array.isArray(tickers) || tickers.length === 0) {
     return res.status(400).json({ error: "tickers must be a non-empty array" });
   }
-  if (!requireDataApiKey(res)) return;
 
-  const normalizedTickers = [...new Set(tickers.map(normalizeTicker).filter(Boolean))].slice(0, 20);
+  const normalizedTickers = [...new Set(tickers.map(normalizeTicker).filter(Boolean))].slice(0, 40);
 
   try {
     const data = {};
-    for (const ticker of normalizedTickers) {
-      const cacheKey = `quote:${ticker}`;
-      let quote = getCached(cacheKey);
-      if (!quote) {
-        quote = await fetchQuote(ticker);
-        setCached(cacheKey, quote, 20 * 1000);
-      }
-      data[ticker] = quote;
+    const missing = [];
+
+    normalizedTickers.forEach((ticker) => {
+      const cached = getCached(`quote:${ticker}`);
+      if (cached) data[ticker] = cached;
+      else missing.push(ticker);
+    });
+
+    if (missing.length) {
+      const fetched = await fetchQuoteMap(missing);
+      Object.entries(fetched).forEach(([ticker, quote]) => {
+        data[ticker] = quote;
+        setCached(`quote:${ticker}`, quote, 20 * 1000);
+      });
     }
-    res.json({ data });
+
+    res.json({ data, provider: MARKET_DATA_PROVIDER });
   } catch (error) {
     console.error("quote-multi error", error);
     res.status(500).json({ error: error.message || "Failed to fetch quotes" });
@@ -778,28 +1203,20 @@ app.post("/api/quote-multi", async (req, res) => {
 });
 
 app.get("/api/market-pulse", async (req, res) => {
-  if (!requireDataApiKey(res)) return;
-
   const fromQuery = String(req.query.tickers || "")
     .split(",")
     .map((item) => normalizeTicker(item))
     .filter(Boolean);
   const universe =
     fromQuery.length > 0
-      ? fromQuery.slice(0, 12)
+      ? fromQuery.slice(0, 20)
       : ["SPY", "QQQ", "DIA", "IWM", "AAPL", "MSFT", "NVDA", "TSLA"];
 
   try {
-    const output = [];
-    for (const ticker of universe) {
-      const cacheKey = `pulse:${ticker}`;
-      let quote = getCached(cacheKey);
-      if (!quote) {
-        quote = await fetchQuote(ticker);
-        setCached(cacheKey, quote, 30 * 1000);
-      }
-      output.push(quote);
-    }
+    const quoteMap = await fetchQuoteMap(universe);
+    const output = universe
+      .map((ticker) => quoteMap[ticker])
+      .filter(Boolean);
 
     const advancers = output.filter((item) => item.percentChange > 0).length;
     const decliners = output.filter((item) => item.percentChange < 0).length;
@@ -833,10 +1250,128 @@ app.get("/api/market-pulse", async (req, res) => {
       })),
     };
 
-    res.json({ data: output, summary });
+    res.json({
+      data: output,
+      summary,
+      provider: MARKET_DATA_PROVIDER,
+    });
   } catch (error) {
     console.error("market-pulse error", error);
     res.status(500).json({ error: error.message || "Failed to fetch market pulse" });
+  }
+});
+
+app.get("/api/market-news", async (req, res) => {
+  const tickers = String(req.query.tickers || "")
+    .split(",")
+    .map((item) => normalizeTicker(item))
+    .filter(Boolean)
+    .slice(0, 5);
+  const topic = String(req.query.topic || "").trim();
+  const limit = clamp(toNumber(req.query.limit) || 12, 4, 40);
+
+  const queries = [];
+  if (topic) queries.push(topic);
+  if (tickers.length) queries.push(...tickers.map((ticker) => `${ticker} stock`));
+  if (!queries.length) {
+    queries.push("stock market", "S&P 500", "Federal Reserve policy");
+  }
+
+  try {
+    const allItems = [];
+    for (const query of queries) {
+      const cacheKey = `news:${query.toLowerCase()}`;
+      let items = getCached(cacheKey);
+      if (!items) {
+        const raw = await fetchYahooNews(query, 10);
+        items = raw.map((item) => normalizeNewsItem(item, query));
+        setCached(cacheKey, items, 5 * 60 * 1000);
+      }
+      allItems.push(...items);
+    }
+
+    const seen = new Set();
+    const unique = allItems.filter((item) => {
+      const id = item.link || item.id || `${item.title}-${item.publishedAt}`;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+
+    unique.sort((left, right) => right.publishedUnix - left.publishedUnix);
+
+    res.json({
+      data: unique.slice(0, limit),
+      meta: {
+        queries,
+        provider: MARKET_DATA_PROVIDER,
+      },
+    });
+  } catch (error) {
+    console.error("market-news error", error);
+    res.status(500).json({ error: error.message || "Failed to fetch market news" });
+  }
+});
+
+app.post("/api/backtest", async (req, res) => {
+  const {
+    ticker,
+    range = "1Y",
+    fastPeriod = 20,
+    slowPeriod = 50,
+    initialCapital = 10000,
+    feeBps = 5,
+  } = req.body || {};
+
+  const symbol = normalizeTicker(ticker);
+  if (!symbol) {
+    return res.status(400).json({ error: "ticker is required" });
+  }
+  if (toNumber(fastPeriod) < 2 || toNumber(slowPeriod) < 3) {
+    return res.status(400).json({ error: "fastPeriod and slowPeriod must be valid numbers" });
+  }
+  if (toNumber(fastPeriod) >= toNumber(slowPeriod)) {
+    return res.status(400).json({ error: "fastPeriod must be smaller than slowPeriod" });
+  }
+
+  try {
+    const rangeConfig = resolveRangeConfig(range);
+    const cacheKey = `backtest-candles:${symbol}:${rangeConfig.range}`;
+    let candles = getCached(cacheKey);
+    if (!candles) {
+      candles = await fetchCandles(symbol, "1d", rangeConfig.range);
+      setCached(cacheKey, candles, 5 * 60 * 1000);
+    }
+
+    if (candles.length < Number(slowPeriod) + 10) {
+      return res.status(400).json({
+        error: `Not enough candles (${candles.length}) for slowPeriod ${slowPeriod}`,
+      });
+    }
+
+    const result = runSmaCrossoverBacktest({
+      candles,
+      fastPeriod: Number(fastPeriod),
+      slowPeriod: Number(slowPeriod),
+      initialCapital: Number(initialCapital),
+      feeBps: Number(feeBps),
+    });
+
+    res.json({
+      meta: {
+        ticker: symbol,
+        range: rangeConfig.label || range,
+        fastPeriod: Number(fastPeriod),
+        slowPeriod: Number(slowPeriod),
+        initialCapital: Number(initialCapital),
+        feeBps: Number(feeBps),
+        provider: MARKET_DATA_PROVIDER,
+      },
+      data: result,
+    });
+  } catch (error) {
+    console.error("backtest error", error);
+    res.status(500).json({ error: error.message || "Failed to run backtest" });
   }
 });
 

@@ -274,6 +274,7 @@ body {
 
 .search-form input,
 .portfolio-form input,
+.backtest-controls input,
 textarea,
 select {
   width: 100%;
@@ -856,6 +857,13 @@ textarea {
   grid-template-columns: 1.2fr 1fr;
 }
 
+.extras-grid {
+  margin-top: 16px;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1.1fr 1fr;
+}
+
 .ai-controls {
   margin-top: 12px;
   display: grid;
@@ -1134,6 +1142,149 @@ textarea {
   font-size: 0.8rem;
 }
 
+.news-panel,
+.backtest-panel {
+  padding: 20px;
+}
+
+.news-list {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.news-item {
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  text-decoration: none;
+  transition: background 0.2s ease;
+}
+
+.news-item:hover {
+  background: rgba(255, 255, 255, 0.11);
+}
+
+.news-item h4 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.news-item p {
+  margin: 5px 0 0;
+  color: var(--text-soft);
+  font-size: 0.8rem;
+}
+
+.news-tags {
+  margin-top: 7px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.news-tags span {
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  padding: 2px 8px;
+  font-size: 0.72rem;
+}
+
+.backtest-controls {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.backtest-controls label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.78rem;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.backtest-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.backtest-summary {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.backtest-summary > div {
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.backtest-summary span {
+  display: block;
+  color: var(--text-soft);
+  font-size: 0.76rem;
+}
+
+.backtest-summary strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.95rem;
+}
+
+.equity-strip {
+  margin-top: 12px;
+  height: 84px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 8px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.equity-strip span {
+  width: 4px;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(180deg, #63f0c4, #68b9ff);
+  opacity: 0.88;
+}
+
+.backtest-trades {
+  margin-top: 12px;
+}
+
+.backtest-trades h4 {
+  margin: 0;
+}
+
+.backtest-trade-list {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.backtest-trade-list > div {
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 7px 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 0.6fr 1fr 0.8fr 0.9fr;
+  font-size: 0.78rem;
+  align-items: center;
+}
+
 .scenario-block {
   margin-top: 12px;
   border-radius: 12px;
@@ -1165,7 +1316,8 @@ textarea {
 @media (max-width: 1120px) {
   .main-grid,
   .analysis-grid,
-  .bottom-grid {
+  .bottom-grid,
+  .extras-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1192,6 +1344,8 @@ textarea {
   .leader-laggard-grid,
   .metrics-grid,
   .tactical-levels,
+  .backtest-row,
+  .backtest-summary,
   .scenario-grid,
   .concentration-grid,
   .ai-grid,
@@ -1224,5 +1378,9 @@ textarea {
 
   .rebalance-list > div {
     grid-template-columns: 1fr;
+  }
+
+  .backtest-trade-list > div {
+    grid-template-columns: 1fr 1fr;
   }
 }

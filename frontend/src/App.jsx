@@ -3,14 +3,17 @@ import { motion } from "framer-motion";
 import AdvancedChart from "./AdvancedChart";
 import {
   fetchAiInsight,
+  fetchMarketNews,
   fetchMarketPulse,
   fetchQuoteMulti,
   fetchStockCandlesMulti,
+  runBacktest,
   searchSymbols,
 } from "./api/client";
 
 const DEFAULT_TICKERS = ["AAPL", "MSFT", "NVDA"];
 const RANGE_OPTIONS = ["1D", "5D", "1M", "3M", "6M", "1Y"];
+const BACKTEST_RANGE_OPTIONS = ["6M", "1Y"];
 const MODE_OPTIONS = [
   { value: "candlestick", label: "Candles" },
   { value: "line", label: "Lines" },
@@ -122,6 +125,13 @@ function formatCompactNumber(value) {
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(numeric);
+}
+
+function formatDateTime(value) {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
+  return date.toLocaleString();
 }
 
 function toneClass(value) {
@@ -421,6 +431,10 @@ function App() {
   const [marketPulseSummary, setMarketPulseSummary] = useState(null);
   const [pulseLoading, setPulseLoading] = useState(false);
   const [pulseError, setPulseError] = useState("");
+  const [newsItems, setNewsItems] = useState([]);
+  const [newsMeta, setNewsMeta] = useState(null);
+  const [newsLoading, setNewsLoading] = useState(false);
+  const [newsError, setNewsError] = useState("");
 
   const [positions, setPositions] = usePersistentState("sv-portfolio-positions", []);
   const [positionForm, setPositionForm] = useState({ ticker: "", shares: "", avgCost: "" });
@@ -435,6 +449,18 @@ function App() {
   const [aiError, setAiError] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiHistory, setAiHistory] = usePersistentState("sv-ai-history", []);
+  const [backtestConfig, setBacktestConfig] = usePersistentState("sv-backtest-config", {
+    ticker: DEFAULT_TICKERS[0],
+    range: "1Y",
+    fastPeriod: 20,
+    slowPeriod: 50,
+    initialCapital: 10000,
+    feeBps: 5,
+  });
+  const [backtestResult, setBacktestResult] = useState(null);
+  const [backtestMeta, setBacktestMeta] = useState(null);
+  const [backtestLoading, setBacktestLoading] = useState(false);
+  const [backtestError, setBacktestError] = useState("");
 
   useEffect(() => {
     if (!Array.isArray(selectedTickers)) {
@@ -479,6 +505,20 @@ function App() {
       setFocusTicker(selectedTickers[0]);
     }
   }, [selectedTickers, focusTicker]);
+
+  useEffect(() => {
+    const current = normalizeTicker(backtestConfig?.ticker);
+    if (current && selectedTickers.includes(current)) return;
+    const replacement = focusTicker || selectedTickers[0] || "";
+    if (!replacement) return;
+    setBacktestConfig((previous) => {
+      if (normalizeTicker(previous?.ticker) === replacement) return previous;
+      return {
+        ...previous,
+        ticker: replacement,
+      };
+    });
+  }, [backtestConfig?.ticker, focusTicker, selectedTickers, setBacktestConfig]);
 
   const addTicker = useCallback(
     (rawValue) => {
@@ -554,6 +594,23 @@ function App() {
     }
   }, []);
 
+  const refreshNews = useCallback(async () => {
+    setNewsLoading(true);
+    setNewsError("");
+    try {
+      const response = await fetchMarketNews({
+        tickers: selectedTickers.slice(0, 4),
+        limit: 12,
+      });
+      setNewsItems(response.data || []);
+      setNewsMeta(response.meta || null);
+    } catch (error) {
+      setNewsError(error.message || "Unable to fetch market news.");
+    } finally {
+      setNewsLoading(false);
+    }
+  }, [selectedTickers]);
+
   const refreshPortfolioQuotes = useCallback(async () => {
     const tickers = [...new Set(positions.map((position) => normalizeTicker(position.ticker)).filter(Boolean))];
     if (tickers.length === 0) {
@@ -572,7 +629,8 @@ function App() {
   useEffect(() => {
     runMarketScan();
     refreshPulse();
-  }, [runMarketScan, refreshPulse]);
+    refreshNews();
+  }, [runMarketScan, refreshPulse, refreshNews]);
 
   useEffect(() => {
     refreshPortfolioQuotes();
@@ -583,10 +641,11 @@ function App() {
     const timer = window.setInterval(() => {
       runMarketScan();
       refreshPulse();
+      refreshNews();
       refreshPortfolioQuotes();
     }, Number(autoRefreshSec) * 1000);
     return () => window.clearInterval(timer);
-  }, [autoRefreshSec, refreshPortfolioQuotes, refreshPulse, runMarketScan]);
+  }, [autoRefreshSec, refreshPortfolioQuotes, refreshPulse, refreshNews, runMarketScan]);
 
   useEffect(() => {
     if (!searchText || searchText.trim().length < 2) {
@@ -701,6 +760,71 @@ function App() {
       return;
     }
     addTicker(searchText);
+  };
+
+  const exportScanSnapshot = () => {
+    if (!rankedSignals.length) return;
+    const rows = rankedSignals.map((row) => ({
+      ticker: row.ticker,
+      profileScore: row.profileScore,
+      signalScore: row.metrics.signalScore,
+      trend: row.metrics.trend,
+      momentum: row.metrics.momentum,
+      changePct: Number(row.metrics.changePct || 0).toFixed(2),
+      performance20: Number(row.metrics.performance20 || 0).toFixed(2),
+      riskLevel: row.metrics.riskLevel,
+      timestamp: new Date().toISOString(),
+    }));
+
+    const header = Object.keys(rows[0]);
+    const csv = [header.join(","), ...rows.map((row) => header.map((key) => row[key]).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `stockvision-scan-${Date.now()}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  const runBacktestScenario = async () => {
+    const ticker = normalizeTicker(backtestConfig.ticker || focusTicker);
+    const fast = Number(backtestConfig.fastPeriod);
+    const slow = Number(backtestConfig.slowPeriod);
+    const capital = Number(backtestConfig.initialCapital);
+    const fee = Number(backtestConfig.feeBps);
+
+    if (!ticker) {
+      setBacktestError("Select a ticker for backtesting.");
+      return;
+    }
+    if (!Number.isFinite(fast) || !Number.isFinite(slow) || fast < 2 || slow < 3 || fast >= slow) {
+      setBacktestError("Use valid fast/slow periods, with fast smaller than slow.");
+      return;
+    }
+    if (!Number.isFinite(capital) || capital <= 0) {
+      setBacktestError("Initial capital must be greater than zero.");
+      return;
+    }
+
+    setBacktestError("");
+    setBacktestLoading(true);
+    try {
+      const response = await runBacktest({
+        ticker,
+        range: backtestConfig.range,
+        fastPeriod: fast,
+        slowPeriod: slow,
+        initialCapital: capital,
+        feeBps: Number.isFinite(fee) ? fee : 5,
+      });
+      setBacktestResult(response.data || null);
+      setBacktestMeta(response.meta || null);
+      setBacktestConfig((previous) => ({ ...previous, ticker }));
+    } catch (error) {
+      setBacktestError(error.message || "Unable to run backtest.");
+    } finally {
+      setBacktestLoading(false);
+    }
   };
 
   const generateAiBrief = async () => {
@@ -877,6 +1001,12 @@ function App() {
       pnl: nextValue - portfolioTotals.marketValue,
     };
   });
+  const backtestTickerOptions = [...new Set([...selectedTickers, ...positions.map((p) => normalizeTicker(p.ticker)).filter(Boolean)])];
+  const backtestCurve = backtestResult?.equityCurve || [];
+  const curveValues = backtestCurve.map((point) => point.value);
+  const curveMin = curveValues.length ? Math.min(...curveValues) : 0;
+  const curveMax = curveValues.length ? Math.max(...curveValues) : 0;
+  const curveRange = Math.max(1, curveMax - curveMin);
 
   return (
     <div className="app-shell">
@@ -1050,10 +1180,17 @@ function App() {
             <button type="button" className="ghost-action" onClick={refreshPulse} disabled={pulseLoading}>
               Refresh Pulse
             </button>
+            <button type="button" className="ghost-action" onClick={refreshNews} disabled={newsLoading}>
+              {newsLoading ? "Loading News..." : "Refresh News"}
+            </button>
+            <button type="button" className="ghost-action" onClick={exportScanSnapshot} disabled={!rankedSignals.length}>
+              Export Scan CSV
+            </button>
           </div>
 
           {dataError && <p className="error-text">{dataError}</p>}
           {pulseError && <p className="error-text">{pulseError}</p>}
+          {newsError && <p className="error-text">{newsError}</p>}
           {marketMeta?.legacyMode && (
             <p className="hint-text">
               Connected backend is on an older API format. Compatibility mode is active.
@@ -1630,6 +1767,241 @@ function App() {
               </div>
             ))}
           </div>
+        </motion.div>
+      </section>
+
+      <section className="extras-grid">
+        <motion.div
+          className="glass-card news-panel"
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ ...STAGGER_ITEM, delay: 0.43 }}
+        >
+          <div className="section-head inline">
+            <div>
+              <h2>News Radar</h2>
+              <p>Free live headlines anchored to your active symbols.</p>
+            </div>
+            <button type="button" className="ghost-action" onClick={refreshNews} disabled={newsLoading}>
+              {newsLoading ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+
+          {newsMeta?.queries?.length ? (
+            <p className="hint-text">
+              Coverage: {newsMeta.queries.join(" · ")}
+            </p>
+          ) : null}
+
+          <div className="news-list">
+            {newsItems.slice(0, 12).map((item) => (
+              <a
+                key={item.id}
+                href={item.link || "#"}
+                target="_blank"
+                rel="noreferrer"
+                className="news-item"
+              >
+                <h4>{item.title}</h4>
+                <p>
+                  {item.publisher} · {formatDateTime(item.publishedAt)}
+                </p>
+                {item.relatedTickers?.length ? (
+                  <div className="news-tags">
+                    {item.relatedTickers.slice(0, 4).map((ticker) => (
+                      <span key={`${item.id}-${ticker}`}>{ticker}</span>
+                    ))}
+                  </div>
+                ) : null}
+              </a>
+            ))}
+            {!newsItems.length ? (
+              <p className="hint-text">{newsLoading ? "Loading news..." : "No headlines available right now."}</p>
+            ) : null}
+          </div>
+        </motion.div>
+
+        <motion.div
+          className="glass-card backtest-panel"
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ ...STAGGER_ITEM, delay: 0.46 }}
+        >
+          <div className="section-head">
+            <h2>Strategy Lab</h2>
+            <p>SMA crossover backtest using free market data, no paid API required.</p>
+          </div>
+
+          <div className="backtest-controls">
+            <div>
+              <label>Ticker</label>
+              <select
+                value={backtestConfig.ticker}
+                onChange={(event) =>
+                  setBacktestConfig((previous) => ({
+                    ...previous,
+                    ticker: event.target.value,
+                  }))
+                }
+              >
+                {backtestTickerOptions.map((ticker) => (
+                  <option key={`backtest-${ticker}`} value={ticker}>
+                    {ticker}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Range</label>
+              <SegmentGroup
+                options={BACKTEST_RANGE_OPTIONS}
+                value={backtestConfig.range}
+                onChange={(value) =>
+                  setBacktestConfig((previous) => ({
+                    ...previous,
+                    range: value,
+                  }))
+                }
+              />
+            </div>
+            <div className="backtest-row">
+              <div>
+                <label>Fast</label>
+                <input
+                  type="number"
+                  min="2"
+                  value={backtestConfig.fastPeriod}
+                  onChange={(event) =>
+                    setBacktestConfig((previous) => ({
+                      ...previous,
+                      fastPeriod: Number(event.target.value),
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <label>Slow</label>
+                <input
+                  type="number"
+                  min="3"
+                  value={backtestConfig.slowPeriod}
+                  onChange={(event) =>
+                    setBacktestConfig((previous) => ({
+                      ...previous,
+                      slowPeriod: Number(event.target.value),
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <label>Capital</label>
+                <input
+                  type="number"
+                  min="1000"
+                  step="100"
+                  value={backtestConfig.initialCapital}
+                  onChange={(event) =>
+                    setBacktestConfig((previous) => ({
+                      ...previous,
+                      initialCapital: Number(event.target.value),
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <label>Fee (bps)</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={backtestConfig.feeBps}
+                  onChange={(event) =>
+                    setBacktestConfig((previous) => ({
+                      ...previous,
+                      feeBps: Number(event.target.value),
+                    }))
+                  }
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="command-actions">
+            <button type="button" className="primary-action" onClick={runBacktestScenario} disabled={backtestLoading}>
+              {backtestLoading ? "Running Backtest..." : "Run Backtest"}
+            </button>
+          </div>
+          {backtestError ? <p className="error-text">{backtestError}</p> : null}
+
+          {backtestResult?.summary ? (
+            <div className="backtest-summary">
+              <div>
+                <span>Total Return</span>
+                <strong className={toneClass(backtestResult.summary.totalReturnPct)}>
+                  {formatPercent(backtestResult.summary.totalReturnPct)}
+                </strong>
+              </div>
+              <div>
+                <span>Buy & Hold</span>
+                <strong className={toneClass(backtestResult.summary.buyHoldReturnPct)}>
+                  {formatPercent(backtestResult.summary.buyHoldReturnPct)}
+                </strong>
+              </div>
+              <div>
+                <span>Alpha</span>
+                <strong className={toneClass(backtestResult.summary.alphaPct)}>
+                  {formatPercent(backtestResult.summary.alphaPct)}
+                </strong>
+              </div>
+              <div>
+                <span>Max Drawdown</span>
+                <strong>{formatPercent(-backtestResult.summary.maxDrawdownPct)}</strong>
+              </div>
+              <div>
+                <span>Win Rate</span>
+                <strong>{formatPercent(backtestResult.summary.winRatePct)}</strong>
+              </div>
+              <div>
+                <span>Trades</span>
+                <strong>{backtestResult.summary.trades}</strong>
+              </div>
+            </div>
+          ) : null}
+
+          {backtestCurve.length ? (
+            <div className="equity-strip">
+              {backtestCurve.slice(-80).map((point) => (
+                <span
+                  key={`eq-${point.date}`}
+                  style={{
+                    height: `${Math.max(8, ((point.value - curveMin) / curveRange) * 62 + 8)}px`,
+                  }}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {backtestResult?.trades?.length ? (
+            <div className="backtest-trades">
+              <h4>Recent Trades</h4>
+              <div className="backtest-trade-list">
+                {backtestResult.trades.slice(-8).reverse().map((trade, index) => (
+                  <div key={`${trade.date}-${trade.type}-${index}`}>
+                    <span>{trade.type}</span>
+                    <span>{trade.date}</span>
+                    <span>{formatCurrency(trade.price)}</span>
+                    <span className={toneClass(trade.pnl || 0)}>
+                      {trade.pnl ? formatCurrency(trade.pnl) : "--"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {backtestMeta ? (
+                <p className="hint-text">
+                  Params: {backtestMeta.fastPeriod}/{backtestMeta.slowPeriod} SMA · {backtestMeta.range}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </motion.div>
       </section>
     </div>
