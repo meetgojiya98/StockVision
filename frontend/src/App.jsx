@@ -3016,30 +3016,78 @@ function App() {
         </div>
         <section className="auth-grid">
           <div className="glass-card auth-story-card">
-            <div className="brand-wrap">
-              <BrandLogo />
-              <div>
-                <p className="brand-title">StockVision X</p>
-                <p className="brand-subtitle">AI Trading Command Center</p>
+            <div className="auth-story-top">
+              <div className="brand-wrap">
+                <BrandLogo />
+                <div>
+                  <p className="brand-title">StockVision X</p>
+                  <p className="brand-subtitle">AI Trading Command Center</p>
+                </div>
               </div>
+              <span className="auth-story-chip">Cloud Vault Enabled</span>
             </div>
-            <h1>Sync your command deck across devices with secure cloud profiles.</h1>
+            <h1>Your trading command center should remember everything, everywhere.</h1>
             <p>
-              Sign in to persist watchlists, scanner tuning, execution settings, portfolio lab state, and strategy
-              configurations in one account vault.
+              Save your market universe, scanner tuning, execution lab, portfolio stress setup, and strategy
+              configurations into one secure profile that follows you across devices.
             </p>
+            <div className="auth-story-actions">
+              <button
+                type="button"
+                className="primary-action"
+                onClick={() => {
+                  setAuthMode("signup");
+                  setAuthError("");
+                  setAuthNotice("");
+                }}
+              >
+                Start With Sign Up
+              </button>
+              <button
+                type="button"
+                className="ghost-action"
+                onClick={() => {
+                  setAuthMode("signin");
+                  setAuthError("");
+                  setAuthNotice("");
+                }}
+              >
+                I Already Have Access
+              </button>
+            </div>
             <div className="auth-feature-grid">
               <div>
-                <span>Cloud State Sync</span>
-                <p>Automatically saves settings and workspace context.</p>
+                <span>State Continuity</span>
+                <p>Every critical setting is auto-saved with versioned profile sync.</p>
               </div>
               <div>
-                <span>Secure Sessions</span>
-                <p>Token-based authentication with explicit sign-out controls.</p>
+                <span>Execution Memory</span>
+                <p>Keep your execution sizing, risk controls, and staged workflows intact.</p>
               </div>
               <div>
-                <span>Persistent Intelligence</span>
-                <p>Keep your setup history and portfolio operations ready.</p>
+                <span>Session Security</span>
+                <p>Tokenized sessions with explicit sync and sign-out controls.</p>
+              </div>
+            </div>
+            <div className="auth-preview-panel">
+              <h3>Inside your synced home</h3>
+              <div className="auth-preview-grid">
+                <div>
+                  <span>Scanner Profiles</span>
+                  <strong>Momentum, MR, Breakout</strong>
+                </div>
+                <div>
+                  <span>Portfolio Ops</span>
+                  <strong>VaR + Guardrails + Rebalance</strong>
+                </div>
+                <div>
+                  <span>AI Intelligence</span>
+                  <strong>Tactical levels + future projection</strong>
+                </div>
+                <div>
+                  <span>Cloud Status</span>
+                  <strong>Auto-sync with manual override</strong>
+                </div>
               </div>
             </div>
           </div>
@@ -3211,36 +3259,77 @@ function App() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ ...STAGGER_ITEM, delay: 0.1 }}
       >
-        <p className="hero-eyebrow">Deeper Feature Suite</p>
-        <h1>Scan, rank, correlate, strategize, and rebalance from one control layer.</h1>
-        <p>
-          Every module now has expanded depth: profile-driven signal scoring, correlation analytics, tactical AI
-          levels, and portfolio risk decomposition.
-        </p>
-        <div className="hero-stats">
-          <div>
-            <span>{selectedTickers.length}</span>
-            <p>Tracked Symbols</p>
+        <div className="hero-layout">
+          <div className="hero-main">
+            <p className="hero-eyebrow">Command Home</p>
+            <h1>From discovery to execution, every trading move lives in one operating system.</h1>
+            <p>
+              StockVision X combines signal intelligence, AI playbooks, portfolio guardrails, and strategy validation
+              into a continuous workflow with cloud-backed state.
+            </p>
+            <div className="hero-stats">
+              <div>
+                <span>{selectedTickers.length}</span>
+                <p>Tracked Symbols</p>
+              </div>
+              <div>
+                <span>{averageSignalScore.toFixed(1)}</span>
+                <p>Avg Signal Score</p>
+              </div>
+              <div>
+                <span>{lastRefresh ? lastRefresh.toLocaleTimeString() : "--:--"}</span>
+                <p>Last Scan</p>
+              </div>
+              <div>
+                <span>{autoRefreshSec ? `${autoRefreshSec}s` : "Manual"}</span>
+                <p>Refresh Cadence</p>
+              </div>
+              <div>
+                <span>{replayHistory.length}</span>
+                <p>Replay Snapshots</p>
+              </div>
+              <div>
+                <span>{cloudSyncLabel}</span>
+                <p>Cloud Sync</p>
+              </div>
+            </div>
           </div>
-          <div>
-            <span>{averageSignalScore.toFixed(1)}</span>
-            <p>Avg Signal Score</p>
-          </div>
-          <div>
-            <span>{lastRefresh ? lastRefresh.toLocaleTimeString() : "--:--"}</span>
-            <p>Last Scan</p>
-          </div>
-          <div>
-            <span>{autoRefreshSec ? `${autoRefreshSec}s` : "Manual"}</span>
-            <p>Refresh Cadence</p>
-          </div>
-          <div>
-            <span>{replayHistory.length}</span>
-            <p>Replay Snapshots</p>
-          </div>
-          <div>
-            <span>{cloudSyncLabel}</span>
-            <p>Cloud Sync</p>
+          <div className="hero-quickpanel">
+            <p className="hero-quick-eyebrow">Session Snapshot</p>
+            <div className="hero-quick-list">
+              <div>
+                <span>Lead Setup</span>
+                <strong>{topSignal ? `${topSignal.ticker} · ${topSignal.profileScore}` : "No signal yet"}</strong>
+              </div>
+              <div>
+                <span>Market Regime</span>
+                <strong>{marketRegime.label}</strong>
+              </div>
+              <div>
+                <span>Sentinel</span>
+                <strong>{sentinelStatus.label}</strong>
+              </div>
+              <div>
+                <span>Mission Step</span>
+                <strong>{activeMissionStep?.label || "Complete workflow"}</strong>
+              </div>
+            </div>
+            <div className="hero-quick-actions">
+              <button type="button" className="primary-action" onClick={runMarketScan} disabled={loadingData}>
+                {loadingData ? "Scanning..." : "Run Market Scan"}
+              </button>
+              <button type="button" className="ghost-action" onClick={generateAiBrief} disabled={aiLoading}>
+                {aiLoading ? "Generating..." : "Generate AI Brief"}
+              </button>
+              <button
+                type="button"
+                className="ghost-action"
+                onClick={() => syncCloudProfileNow()}
+                disabled={cloudSyncState.status === "saving"}
+              >
+                {cloudSyncState.status === "saving" ? "Syncing..." : "Sync Cloud State"}
+              </button>
+            </div>
           </div>
         </div>
       </motion.section>
