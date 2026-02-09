@@ -148,6 +148,60 @@ function riskClass(riskLevel) {
   return "risk-low";
 }
 
+function deriveMarketRegime(pulseSummary, rankedSignals) {
+  const avgMove = Number(pulseSummary?.avgMove || 0);
+  const breadth = String(pulseSummary?.breadth || "").toLowerCase();
+  const bullishCount = rankedSignals.filter((row) => row.metrics?.trend === "Bullish").length;
+  const bearishCount = rankedSignals.filter((row) => row.metrics?.trend === "Bearish").length;
+  const total = rankedSignals.length || 1;
+  const bullishShare = bullishCount / total;
+  const bearishShare = bearishCount / total;
+
+  const breadthPositive = breadth.includes("positive");
+  const breadthNegative = breadth.includes("negative");
+
+  if ((avgMove >= 0.45 && bullishShare >= 0.5) || breadthPositive) {
+    return {
+      label: "Risk-On",
+      detail: "Upside breadth and trend follow-through are dominant.",
+      toneClass: "tone-positive",
+      chipClass: "status-positive",
+    };
+  }
+
+  if ((avgMove <= -0.45 && bearishShare >= 0.4) || breadthNegative) {
+    return {
+      label: "Risk-Off",
+      detail: "Defensive conditions with downside pressure across symbols.",
+      toneClass: "tone-negative",
+      chipClass: "status-negative",
+    };
+  }
+
+  if (Math.abs(avgMove) <= 0.2) {
+    return {
+      label: "Rotation",
+      detail: "Mixed tape with sector rotation and lower directional conviction.",
+      toneClass: "tone-neutral",
+      chipClass: "status-neutral",
+    };
+  }
+
+  return {
+    label: "Balanced",
+    detail: "Signals are mixed. Prioritize selectivity and risk control.",
+    toneClass: "tone-neutral",
+    chipClass: "status-neutral",
+  };
+}
+
+function isEditableTarget(target) {
+  if (!target) return false;
+  const tag = String(target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return true;
+  return Boolean(target.isContentEditable);
+}
+
 function average(values) {
   if (!values.length) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -420,6 +474,7 @@ function App() {
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestionsRef = useRef(null);
+  const searchInputRef = useRef(null);
 
   const [marketData, setMarketData] = useState({});
   const [marketMeta, setMarketMeta] = useState(null);
@@ -797,6 +852,12 @@ function App() {
     return sum / rankedSignals.length;
   }, [rankedSignals]);
 
+  const averageVolatility = useMemo(() => {
+    if (!rankedSignals.length) return 0;
+    const sum = rankedSignals.reduce((acc, row) => acc + Number(row.metrics.volatility || 0), 0);
+    return sum / rankedSignals.length;
+  }, [rankedSignals]);
+
   const pulseSummary = useMemo(() => {
     if (marketPulseSummary) return marketPulseSummary;
     const advancers = marketPulse.filter((item) => item.percentChange > 0).length;
@@ -814,6 +875,10 @@ function App() {
       laggards: [],
     };
   }, [marketPulse, marketPulseSummary]);
+
+  const marketRegime = useMemo(() => deriveMarketRegime(pulseSummary, rankedSignals), [pulseSummary, rankedSignals]);
+  const topSignal = rankedSignals[0] || null;
+  const aiEngineDisplay = aiMeta?.engine ? String(aiMeta.engine).replace(/-/g, " ") : "standby";
 
   const signalChecklist = useMemo(() => {
     if (!focusMetrics) return [];
@@ -914,7 +979,7 @@ function App() {
     }
   };
 
-  const generateAiBrief = async () => {
+  const generateAiBrief = useCallback(async () => {
     if (!focusTicker || !focusPayload) {
       setAiError("Run a market scan first, then select a focus ticker.");
       return;
@@ -960,7 +1025,41 @@ function App() {
     } finally {
       setAiLoading(false);
     }
-  };
+  }, [aiPrompt, focusMetrics, focusPayload, focusTicker, pulseSummary, riskProfile, scannerProfile, setAiHistory, strategyStyle]);
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      const key = String(event.key || "").toLowerCase();
+      const editable = isEditableTarget(event.target);
+
+      if (key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        setShowSuggestions(true);
+        return;
+      }
+
+      if (editable || event.repeat) return;
+      if (!event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+
+      if (key === "s") {
+        event.preventDefault();
+        runMarketScan();
+      } else if (key === "p") {
+        event.preventDefault();
+        refreshPulse();
+      } else if (key === "n") {
+        event.preventDefault();
+        refreshNews();
+      } else if (key === "b") {
+        event.preventDefault();
+        generateAiBrief();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [generateAiBrief, refreshNews, refreshPulse, runMarketScan]);
 
   const handleAddPosition = (event) => {
     event.preventDefault();
@@ -1116,13 +1215,32 @@ function App() {
             <p className="brand-subtitle">AI Trading Command Center</p>
           </div>
         </div>
-        <button
-          type="button"
-          className="theme-toggle"
-          onClick={() => setTheme((previous) => (previous === "night" ? "day" : "night"))}
-        >
-          {theme === "night" ? "Switch To Daylight" : "Switch To Afterhours"}
-        </button>
+        <div className="topbar-right">
+          <div className="topbar-meta">
+            <span className={`status-chip ${marketRegime.chipClass}`}>{marketRegime.label}</span>
+            <span
+              className={`status-chip ${
+                backendStatus === "online"
+                  ? "status-positive"
+                  : backendStatus === "offline"
+                  ? "status-negative"
+                  : "status-neutral"
+              }`}
+            >
+              API {backendStatus}
+            </span>
+            <span className="status-chip status-neutral">
+              Auto {autoRefreshSec ? `${autoRefreshSec}s` : "manual"}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={() => setTheme((previous) => (previous === "night" ? "day" : "night"))}
+          >
+            {theme === "night" ? "Switch To Daylight" : "Switch To Afterhours"}
+          </button>
+        </div>
       </motion.header>
 
       <motion.section
@@ -1155,6 +1273,57 @@ function App() {
             <p>Refresh Cadence</p>
           </div>
         </div>
+      </motion.section>
+
+      <motion.section
+        className="glass-card ops-ribbon"
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ ...STAGGER_ITEM, delay: 0.12 }}
+      >
+        <div className="ops-grid">
+          <div className="ops-metric">
+            <p>Market Regime</p>
+            <h3 className={marketRegime.toneClass}>{marketRegime.label}</h3>
+            <small>{marketRegime.detail}</small>
+          </div>
+          <div className="ops-metric">
+            <p>Lead Setup</p>
+            <h3>{topSignal ? `${topSignal.ticker} · ${topSignal.profileScore}` : "--"}</h3>
+            <small>{topSignal ? `${topSignal.metrics.trend} / ${topSignal.metrics.momentum}` : "Run a scan to rank setups."}</small>
+          </div>
+          <div className="ops-metric">
+            <p>Heat + Breadth</p>
+            <h3 className={toneClass(pulseSummary.avgMove || 0)}>{formatPercent(pulseSummary.avgMove || 0)}</h3>
+            <small>
+              {pulseSummary.advancers || 0} advancers / {pulseSummary.decliners || 0} decliners
+            </small>
+          </div>
+          <div className="ops-metric">
+            <p>AI Engine</p>
+            <h3>{aiEngineDisplay}</h3>
+            <small>Volatility map: {formatPercent(averageVolatility)}</small>
+          </div>
+        </div>
+        <div className="ops-actions">
+          <button type="button" className="ghost-action ops-action" onClick={runMarketScan} disabled={loadingData}>
+            <span>{loadingData ? "Scanning..." : "Run Scan"}</span>
+            <kbd>Shift+S</kbd>
+          </button>
+          <button type="button" className="ghost-action ops-action" onClick={refreshPulse} disabled={pulseLoading}>
+            <span>Pulse</span>
+            <kbd>Shift+P</kbd>
+          </button>
+          <button type="button" className="ghost-action ops-action" onClick={refreshNews} disabled={newsLoading}>
+            <span>News</span>
+            <kbd>Shift+N</kbd>
+          </button>
+          <button type="button" className="ghost-action ops-action" onClick={generateAiBrief} disabled={aiLoading}>
+            <span>AI Brief</span>
+            <kbd>Shift+B</kbd>
+          </button>
+        </div>
+        <p className="shortcut-copy">Press "/" to jump to ticker search instantly.</p>
       </motion.section>
 
       <section className="main-grid">
@@ -1190,6 +1359,7 @@ function App() {
 
           <form className="search-form" ref={suggestionsRef} onSubmit={handleSearchSubmit}>
             <input
+              ref={searchInputRef}
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
               onFocus={() => setShowSuggestions(true)}
@@ -1281,7 +1451,8 @@ function App() {
 
           <div className="command-actions">
             <button type="button" className="primary-action" onClick={runMarketScan} disabled={loadingData}>
-              {loadingData ? "Scanning..." : "Run Market Scan"}
+              <span>{loadingData ? "Scanning..." : "Run Market Scan"}</span>
+              {!loadingData ? <kbd>Shift+S</kbd> : null}
             </button>
             <button
               type="button"
@@ -1289,16 +1460,18 @@ function App() {
               onClick={testBackendConnection}
               disabled={backendStatus === "checking"}
             >
-              {backendStatus === "checking" ? "Testing..." : "Test Backend"}
+              <span>{backendStatus === "checking" ? "Testing..." : "Test Backend"}</span>
             </button>
             <button type="button" className="ghost-action" onClick={refreshPulse} disabled={pulseLoading}>
-              Refresh Pulse
+              <span>Refresh Pulse</span>
+              <kbd>Shift+P</kbd>
             </button>
             <button type="button" className="ghost-action" onClick={refreshNews} disabled={newsLoading}>
-              {newsLoading ? "Loading News..." : "Refresh News"}
+              <span>{newsLoading ? "Loading News..." : "Refresh News"}</span>
+              {!newsLoading ? <kbd>Shift+N</kbd> : null}
             </button>
             <button type="button" className="ghost-action" onClick={exportScanSnapshot} disabled={!rankedSignals.length}>
-              Export Scan CSV
+              <span>Export Scan CSV</span>
             </button>
           </div>
 
@@ -1344,22 +1517,30 @@ function App() {
           </div>
 
           <div className="pulse-list">
-            {marketPulse.map((item) => (
-              <div key={item.symbol} className="pulse-item">
-                <div className="pulse-headline">
-                  <p>{item.symbol}</p>
-                  <span className={toneClass(item.percentChange)}>{formatPercent(item.percentChange)}</span>
-                </div>
-                <h4>{formatCurrency(item.price)}</h4>
-                <div className="pulse-bar-track">
-                  <span
-                    className={`pulse-bar-fill ${item.percentChange >= 0 ? "up" : "down"}`}
-                    style={{ width: `${Math.min(100, Math.abs(item.percentChange) * 14)}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-            {marketPulse.length === 0 && <p className="hint-text">{pulseLoading ? "Loading pulse..." : "No pulse data yet."}</p>}
+            {pulseLoading && marketPulse.length === 0
+              ? Array.from({ length: 4 }).map((_, index) => (
+                  <div key={`pulse-skeleton-${index}`} className="pulse-item pulse-skeleton">
+                    <span className="skeleton-line short" />
+                    <span className="skeleton-line medium" />
+                    <span className="skeleton-line long" />
+                  </div>
+                ))
+              : marketPulse.map((item) => (
+                  <div key={item.symbol} className="pulse-item">
+                    <div className="pulse-headline">
+                      <p>{item.symbol}</p>
+                      <span className={toneClass(item.percentChange)}>{formatPercent(item.percentChange)}</span>
+                    </div>
+                    <h4>{formatCurrency(item.price)}</h4>
+                    <div className="pulse-bar-track">
+                      <span
+                        className={`pulse-bar-fill ${item.percentChange >= 0 ? "up" : "down"}`}
+                        style={{ width: `${Math.min(100, Math.abs(item.percentChange) * 14)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+            {!pulseLoading && marketPulse.length === 0 && <p className="hint-text">No pulse data yet.</p>}
           </div>
 
           {(pulseSummary.leaders?.length || pulseSummary.laggards?.length) && (
@@ -1638,7 +1819,8 @@ function App() {
           </div>
 
           <button type="button" className="primary-action" onClick={generateAiBrief} disabled={aiLoading}>
-            {aiLoading ? "Generating Brief..." : "Generate AI Brief"}
+            <span>{aiLoading ? "Generating Brief..." : "Generate AI Brief"}</span>
+            {!aiLoading ? <kbd>Shift+B</kbd> : null}
           </button>
           {aiError && <p className="error-text">{aiError}</p>}
 
@@ -1909,30 +2091,36 @@ function App() {
           ) : null}
 
           <div className="news-list">
-            {newsItems.slice(0, 12).map((item) => (
-              <a
-                key={item.id}
-                href={item.link || "#"}
-                target="_blank"
-                rel="noreferrer"
-                className="news-item"
-              >
-                <h4>{item.title}</h4>
-                <p>
-                  {item.publisher} · {formatDateTime(item.publishedAt)}
-                </p>
-                {item.relatedTickers?.length ? (
-                  <div className="news-tags">
-                    {item.relatedTickers.slice(0, 4).map((ticker) => (
-                      <span key={`${item.id}-${ticker}`}>{ticker}</span>
-                    ))}
+            {newsLoading && newsItems.length === 0
+              ? Array.from({ length: 4 }).map((_, index) => (
+                  <div key={`news-skeleton-${index}`} className="news-item news-skeleton">
+                    <span className="skeleton-line long" />
+                    <span className="skeleton-line medium" />
+                    <span className="skeleton-line short" />
                   </div>
-                ) : null}
-              </a>
-            ))}
-            {!newsItems.length ? (
-              <p className="hint-text">{newsLoading ? "Loading news..." : "No headlines available right now."}</p>
-            ) : null}
+                ))
+              : newsItems.slice(0, 12).map((item) => (
+                  <a
+                    key={item.id}
+                    href={item.link || "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="news-item"
+                  >
+                    <h4>{item.title}</h4>
+                    <p>
+                      {item.publisher} · {formatDateTime(item.publishedAt)}
+                    </p>
+                    {item.relatedTickers?.length ? (
+                      <div className="news-tags">
+                        {item.relatedTickers.slice(0, 4).map((ticker) => (
+                          <span key={`${item.id}-${ticker}`}>{ticker}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </a>
+                ))}
+            {!newsLoading && !newsItems.length ? <p className="hint-text">No headlines available right now.</p> : null}
           </div>
         </motion.div>
 
