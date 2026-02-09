@@ -56,6 +56,25 @@ const QUICK_PROMPTS = [
   "Rank this setup for risk/reward compared with SPY.",
 ];
 const STAGGER_ITEM = { duration: 0.45, ease: "easeOut" };
+const WORKSPACE_ORDER = ["market", "intelligence", "portfolio", "strategy"];
+const WORKSPACE_INFO = {
+  market: {
+    label: "Market Command",
+    hint: "Scanner, pulse, chart arena, and signal matrix",
+  },
+  intelligence: {
+    label: "AI Intelligence",
+    hint: "Copilot workflow and curated news stream",
+  },
+  portfolio: {
+    label: "Portfolio Ops",
+    hint: "Position monitor with risk and scenario control",
+  },
+  strategy: {
+    label: "Strategy Lab",
+    hint: "Chart context plus backtest execution",
+  },
+};
 
 function usePersistentState(key, fallbackValue) {
   function normalizeParsed(parsed) {
@@ -462,6 +481,7 @@ function BrandLogo() {
 
 function App() {
   const [theme, setTheme] = usePersistentState("sv-theme", "day");
+  const [activeWorkspace, setActiveWorkspace] = usePersistentState("sv-workspace-tab", "market");
   const [selectedTickers, setSelectedTickers] = usePersistentState("sv-selected-tickers", DEFAULT_TICKERS);
   const [range, setRange] = usePersistentState("sv-range", "3M");
   const [chartMode, setChartMode] = usePersistentState("sv-chart-mode", "candlestick");
@@ -527,6 +547,11 @@ function App() {
   const [backtestMeta, setBacktestMeta] = useState(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestError, setBacktestError] = useState("");
+
+  useEffect(() => {
+    if (WORKSPACE_ORDER.includes(activeWorkspace)) return;
+    setActiveWorkspace("market");
+  }, [activeWorkspace, setActiveWorkspace]);
 
   useEffect(() => {
     if (!Array.isArray(selectedTickers)) {
@@ -908,6 +933,32 @@ function App() {
       method: projection.method || "model",
     };
   }, [aiInsight]);
+  const workspaceTabs = useMemo(
+    () => [
+      {
+        id: "market",
+        ...WORKSPACE_INFO.market,
+        stat: `${selectedTickers.length} symbols`,
+      },
+      {
+        id: "intelligence",
+        ...WORKSPACE_INFO.intelligence,
+        stat: `${newsItems.length} headlines`,
+      },
+      {
+        id: "portfolio",
+        ...WORKSPACE_INFO.portfolio,
+        stat: `${positions.length} positions`,
+      },
+      {
+        id: "strategy",
+        ...WORKSPACE_INFO.strategy,
+        stat: backtestResult?.summary ? `${backtestResult.summary.trades} trades` : "No run yet",
+      },
+    ],
+    [backtestResult?.summary?.trades, newsItems.length, positions.length, selectedTickers.length]
+  );
+  const activeWorkspaceInfo = WORKSPACE_INFO[activeWorkspace] || WORKSPACE_INFO.market;
 
   const signalChecklist = useMemo(() => {
     if (!focusMetrics) return [];
@@ -1068,6 +1119,29 @@ function App() {
         return;
       }
 
+      if (!editable && event.altKey && !event.metaKey && !event.ctrlKey) {
+        if (key === "1") {
+          event.preventDefault();
+          setActiveWorkspace("market");
+          return;
+        }
+        if (key === "2") {
+          event.preventDefault();
+          setActiveWorkspace("intelligence");
+          return;
+        }
+        if (key === "3") {
+          event.preventDefault();
+          setActiveWorkspace("portfolio");
+          return;
+        }
+        if (key === "4") {
+          event.preventDefault();
+          setActiveWorkspace("strategy");
+          return;
+        }
+      }
+
       if (editable || event.repeat) return;
       if (!event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
 
@@ -1088,7 +1162,7 @@ function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [generateAiBrief, refreshNews, refreshPulse, runMarketScan]);
+  }, [generateAiBrief, refreshNews, refreshPulse, runMarketScan, setActiveWorkspace]);
 
   const handleAddPosition = (event) => {
     event.preventDefault();
@@ -1224,7 +1298,7 @@ function App() {
   const curveRange = Math.max(1, curveMax - curveMin);
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-workspace={activeWorkspace}>
       <div className="ambient-backdrop" aria-hidden="true">
         <span className="orb orb-a" />
         <span className="orb orb-b" />
@@ -1355,7 +1429,33 @@ function App() {
         <p className="shortcut-copy">Press "/" to jump to ticker search instantly.</p>
       </motion.section>
 
-      <section className="main-grid">
+      <section className="glass-card workspace-nav">
+        <div className="workspace-nav-head">
+          <div>
+            <h2>{activeWorkspaceInfo.label}</h2>
+            <p>{activeWorkspaceInfo.hint}</p>
+          </div>
+          <p className="workspace-shortcuts">Alt+1/2/3/4 to switch workspace</p>
+        </div>
+        <div className="workspace-tablist" role="tablist" aria-label="Workspace tabs">
+          {workspaceTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={activeWorkspace === tab.id}
+              className={`workspace-tab ${activeWorkspace === tab.id ? "active" : ""}`}
+              onClick={() => setActiveWorkspace(tab.id)}
+            >
+              <span>{tab.label}</span>
+              <small>{tab.hint}</small>
+              <em>{tab.stat}</em>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="main-grid workspace-section section-main">
         <motion.div
           className="glass-card command-card"
           initial={{ opacity: 0, y: 24 }}
@@ -1599,7 +1699,7 @@ function App() {
         </motion.div>
       </section>
 
-      <section className="analysis-grid">
+      <section className="analysis-grid workspace-section section-analysis">
         <motion.div
           className="glass-card chart-card"
           initial={{ opacity: 0, y: 24 }}
@@ -1806,7 +1906,7 @@ function App() {
         </div>
       </section>
 
-      <section className="bottom-grid">
+      <section className="bottom-grid workspace-section section-bottom">
         <motion.div
           className="glass-card ai-panel"
           initial={{ opacity: 0, y: 24 }}
@@ -2134,7 +2234,7 @@ function App() {
         </motion.div>
       </section>
 
-      <section className="extras-grid">
+      <section className="extras-grid workspace-section section-extras">
         <motion.div
           className="glass-card news-panel"
           initial={{ opacity: 0, y: 24 }}
