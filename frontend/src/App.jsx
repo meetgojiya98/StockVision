@@ -2986,6 +2986,24 @@ function App() {
   const cloudSyncLabel = cloudSyncStatusLabel(cloudSyncState.status);
   const cloudSyncClass = cloudSyncStatusClass(cloudSyncState.status);
   const accountName = authUser?.name || authUser?.email || "Trader";
+  const pulseLeader = pulseSummary.leaders?.[0] || null;
+  const pulseLaggard = pulseSummary.laggards?.[0] || null;
+  const heroTickerTape = useMemo(
+    () =>
+      selectedTickers.slice(0, 8).map((ticker) => {
+        const metrics = marketData[ticker]?.metrics;
+        const quote =
+          quoteSnapshot[ticker] || marketPulse.find((item) => normalizeTicker(item?.symbol) === ticker) || null;
+        return {
+          ticker,
+          last: Number(metrics?.lastClose || quote?.price || 0),
+          changePct: Number(metrics?.changePct ?? quote?.percentChange ?? 0),
+          score: Number(metrics?.signalScore || 0),
+          trend: metrics?.trend || "Neutral",
+        };
+      }),
+    [marketData, marketPulse, quoteSnapshot, selectedTickers]
+  );
 
   if (authChecking) {
     return (
@@ -3088,6 +3106,20 @@ function App() {
                   <span>Cloud Status</span>
                   <strong>Auto-sync with manual override</strong>
                 </div>
+              </div>
+            </div>
+            <div className="auth-proof-row">
+              <div>
+                <strong>Free data stack</strong>
+                <span>Yahoo primary + fallback feeds</span>
+              </div>
+              <div>
+                <strong>Execution aware</strong>
+                <span>Sizing, plan score, and portfolio staging</span>
+              </div>
+              <div>
+                <strong>Cloud continuity</strong>
+                <span>Persistent state, settings, and profile memory</span>
               </div>
             </div>
           </div>
@@ -3267,6 +3299,22 @@ function App() {
               StockVision X combines signal intelligence, AI playbooks, portfolio guardrails, and strategy validation
               into a continuous workflow with cloud-backed state.
             </p>
+            <div className="hero-command-row">
+              <button type="button" className="primary-action" onClick={runMarketScan} disabled={loadingData}>
+                {loadingData ? "Scanning..." : "Run Market Scan"}
+                {!loadingData ? <kbd>Shift+S</kbd> : null}
+              </button>
+              <button type="button" className="ghost-action" onClick={generateAiBrief} disabled={aiLoading}>
+                {aiLoading ? "Generating..." : "Generate AI Brief"}
+                {!aiLoading ? <kbd>Shift+B</kbd> : null}
+              </button>
+              <button type="button" className="ghost-action" onClick={() => setActiveWorkspace("market")}>
+                Open Market Command
+              </button>
+              <button type="button" className="ghost-action" onClick={openCommandPalette}>
+                Open Command Menu
+              </button>
+            </div>
             <div className="hero-stats">
               <div>
                 <span>{selectedTickers.length}</span>
@@ -3314,13 +3362,37 @@ function App() {
                 <strong>{activeMissionStep?.label || "Complete workflow"}</strong>
               </div>
             </div>
+            <div className="hero-spotlight-grid">
+              <div>
+                <span>Alpha Lead</span>
+                <strong>
+                  {topOpportunity
+                    ? `${topOpportunity.ticker} · ${topOpportunity.direction} · RR ${topOpportunity.rr.toFixed(2)}`
+                    : "Run market scan to generate alpha"}
+                </strong>
+              </div>
+              <div>
+                <span>Execution Lead</span>
+                <strong>
+                  {topExecutionPlan
+                    ? `${topExecutionPlan.ticker} · ${formatCompactNumber(topExecutionPlan.plannedShares)} sh · score ${topExecutionPlan.planScore}`
+                    : "Execution plans pending"}
+                </strong>
+              </div>
+              <div>
+                <span>Pulse Leader</span>
+                <strong>
+                  {pulseLeader ? `${pulseLeader.symbol} ${formatPercent(pulseLeader.percentChange)}` : "No pulse leader"}
+                </strong>
+              </div>
+              <div>
+                <span>Pulse Laggard</span>
+                <strong>
+                  {pulseLaggard ? `${pulseLaggard.symbol} ${formatPercent(pulseLaggard.percentChange)}` : "No laggard"}
+                </strong>
+              </div>
+            </div>
             <div className="hero-quick-actions">
-              <button type="button" className="primary-action" onClick={runMarketScan} disabled={loadingData}>
-                {loadingData ? "Scanning..." : "Run Market Scan"}
-              </button>
-              <button type="button" className="ghost-action" onClick={generateAiBrief} disabled={aiLoading}>
-                {aiLoading ? "Generating..." : "Generate AI Brief"}
-              </button>
               <button
                 type="button"
                 className="ghost-action"
@@ -3329,8 +3401,24 @@ function App() {
               >
                 {cloudSyncState.status === "saving" ? "Syncing..." : "Sync Cloud State"}
               </button>
+              <button type="button" className="ghost-action" onClick={() => setActiveWorkspace("intelligence")}>
+                Open AI Intelligence
+              </button>
+              <button type="button" className="ghost-action" onClick={() => setActiveWorkspace("portfolio")}>
+                Open Portfolio Ops
+              </button>
             </div>
           </div>
+        </div>
+        <div className="hero-ticker-tape" role="list" aria-label="Live ticker tape">
+          {heroTickerTape.map((row) => (
+            <button key={`hero-tape-${row.ticker}`} type="button" className="hero-ticker-chip" onClick={() => setFocusTicker(row.ticker)}>
+              <span>{row.ticker}</span>
+              <strong>{row.last > 0 ? formatCurrency(row.last) : "--"}</strong>
+              <em className={toneClass(row.changePct)}>{formatPercent(row.changePct)}</em>
+              <small>{row.score ? `Score ${row.score} · ${row.trend}` : row.trend}</small>
+            </button>
+          ))}
         </div>
       </motion.section>
 
