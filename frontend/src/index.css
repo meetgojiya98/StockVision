@@ -1221,6 +1221,52 @@ kbd {
   font-size: 0.86rem;
 }
 
+.future-projection {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.projection-card {
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 9px 10px;
+}
+
+.projection-primary {
+  background:
+    radial-gradient(120% 120% at 20% -10%, rgba(118, 174, 255, 0.2), transparent 50%),
+    rgba(255, 255, 255, 0.08);
+}
+
+.projection-card span {
+  display: block;
+  color: var(--text-soft);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.projection-card strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.92rem;
+}
+
+.projection-primary strong {
+  font-size: 1.02rem;
+  font-family: "Sora", sans-serif;
+}
+
+.projection-card small {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-soft);
+  font-size: 0.74rem;
+}
+
 .confidence-text {
   margin: 10px 0 0;
   font-weight: 700;
@@ -1645,6 +1691,7 @@ kbd {
   .leader-laggard-grid,
   .metrics-grid,
   .tactical-levels,
+  .future-projection,
   .backtest-row,
   .backtest-summary,
   .scenario-grid,

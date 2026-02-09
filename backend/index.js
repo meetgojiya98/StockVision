@@ -614,6 +614,58 @@ function buildSignalFlags({
   return flags.slice(0, 6);
 }
 
+function getProjectionHorizonDays(riskProfile) {
+  if (riskProfile === "aggressive") return 45;
+  if (riskProfile === "conservative") return 20;
+  return 30;
+}
+
+function toFinite(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function buildHeuristicFutureProjection(metrics, riskProfile = "balanced") {
+  const lastClose = Math.max(0.01, toFinite(metrics?.lastClose, 0));
+  const performance5 = toFinite(metrics?.performance5, 0);
+  const performance20 = toFinite(metrics?.performance20, 0);
+  const volatility = Math.max(8, toFinite(metrics?.volatility, 24));
+  const trend = String(metrics?.trend || "Neutral");
+  const momentum = String(metrics?.momentum || "Neutral");
+  const horizonDays = getProjectionHorizonDays(riskProfile);
+
+  const trendBias = trend === "Bullish" ? 2.4 : trend === "Bearish" ? -2.4 : 0.25;
+  const momentumBias =
+    momentum === "Positive"
+      ? 1.25
+      : momentum === "Negative"
+      ? -1.25
+      : momentum === "Oversold"
+      ? 1
+      : momentum === "Overbought"
+      ? -1
+      : 0.2;
+  const perfComponent = clamp(performance20 * 0.45 + performance5 * 0.65, -11, 11);
+  const volPenalty = clamp((volatility - 22) * 0.08, -1.3, 2.3);
+  const expectedMovePct = clamp(perfComponent + trendBias + momentumBias - volPenalty, -18, 18);
+  const predictedPrice = lastClose * (1 + expectedMovePct / 100);
+  const uncertaintyPct = clamp(
+    volatility * Math.sqrt(Math.max(5, horizonDays) / 252) * 0.65,
+    2.4,
+    24
+  );
+
+  return {
+    horizonDays,
+    predictedPrice: Number(predictedPrice.toFixed(2)),
+    expectedMovePct: Number(expectedMovePct.toFixed(2)),
+    rangeLow: Number((predictedPrice * (1 - uncertaintyPct / 100)).toFixed(2)),
+    rangeHigh: Number((predictedPrice * (1 + uncertaintyPct / 100)).toFixed(2)),
+    uncertaintyPct: Number(uncertaintyPct.toFixed(2)),
+    method: "heuristic-v2",
+  };
+}
+
 function computeCorrelation(seriesA, seriesB) {
   const minLength = Math.min(seriesA.length, seriesB.length);
   if (minLength < 8) return 0;
@@ -830,6 +882,7 @@ function buildHeuristicInsight({ ticker, metrics, riskProfile, question }) {
           invalidation: (metrics.support * 0.97).toFixed(2),
           firstTarget: (metrics.resistance * 0.99).toFixed(2),
         };
+  const futureProjection = buildHeuristicFutureProjection(metrics, riskProfile);
 
   return {
     summary: `${ticker} shows ${direction} pressure with a ${metrics.trend.toLowerCase()} trend profile. For a ${riskProfile} profile, focus on ${riskTone}.`,
@@ -839,6 +892,7 @@ function buildHeuristicInsight({ ticker, metrics, riskProfile, question }) {
     actionItems,
     confidence: clamp(Math.round(metrics.signalScore + metrics.performance5), 30, 88),
     tacticalLevels,
+    futureProjection,
     answeredQuestion: question || "General strategy brief",
   };
 }
@@ -877,7 +931,7 @@ async function buildOpenAiInsight({ ticker, candles, metrics, riskProfile, quest
         {
           role: "system",
           content:
-            "You are a systematic market strategist. Return strict JSON with keys: summary (string), setups (string[]), risks (string[]), catalysts (string[]), actionItems (string[]), confidence (number 0-100), tacticalLevels ({entryZone, invalidation, firstTarget}), answeredQuestion (string). Keep claims tethered to provided data.",
+            "You are a systematic market strategist. Return strict JSON with keys: summary (string), setups (string[]), risks (string[]), catalysts (string[]), actionItems (string[]), confidence (number 0-100), tacticalLevels ({entryZone, invalidation, firstTarget}), futureProjection ({horizonDays, predictedPrice, expectedMovePct, rangeLow, rangeHigh}), answeredQuestion (string). Keep claims tethered to provided data.",
         },
         {
           role: "user",
@@ -896,6 +950,7 @@ async function buildOpenAiInsight({ ticker, candles, metrics, riskProfile, quest
   const content = payload?.choices?.[0]?.message?.content;
   const parsed = parseOpenAiJson(content);
   if (!parsed) {
+    const fallbackProjection = buildHeuristicFutureProjection(metrics, riskProfile);
     return {
       summary: content || `${ticker} analysis generated, but structured format was unavailable.`,
       setups: [],
@@ -908,9 +963,15 @@ async function buildOpenAiInsight({ ticker, candles, metrics, riskProfile, quest
         invalidation: "Data unavailable",
         firstTarget: "Data unavailable",
       },
+      futureProjection: fallbackProjection,
       answeredQuestion: question || "General strategy brief",
     };
   }
+
+  const fallbackProjection = buildHeuristicFutureProjection(metrics, riskProfile);
+  const projection = parsed?.futureProjection && typeof parsed.futureProjection === "object"
+    ? parsed.futureProjection
+    : {};
 
   return {
     summary: String(parsed.summary || ""),
@@ -923,6 +984,15 @@ async function buildOpenAiInsight({ ticker, candles, metrics, riskProfile, quest
       entryZone: String(parsed?.tacticalLevels?.entryZone || "N/A"),
       invalidation: String(parsed?.tacticalLevels?.invalidation || "N/A"),
       firstTarget: String(parsed?.tacticalLevels?.firstTarget || "N/A"),
+    },
+    futureProjection: {
+      horizonDays: Math.max(1, toFinite(projection?.horizonDays, fallbackProjection.horizonDays)),
+      predictedPrice: toFinite(projection?.predictedPrice, fallbackProjection.predictedPrice),
+      expectedMovePct: toFinite(projection?.expectedMovePct, fallbackProjection.expectedMovePct),
+      rangeLow: toFinite(projection?.rangeLow, fallbackProjection.rangeLow),
+      rangeHigh: toFinite(projection?.rangeHigh, fallbackProjection.rangeHigh),
+      uncertaintyPct: toFinite(projection?.uncertaintyPct, fallbackProjection.uncertaintyPct),
+      method: String(projection?.method || "openai+heuristic"),
     },
     answeredQuestion: String(parsed.answeredQuestion || question || "General strategy brief"),
   };

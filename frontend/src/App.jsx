@@ -202,6 +202,11 @@ function isEditableTarget(target) {
   return Boolean(target.isContentEditable);
 }
 
+function toFiniteNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function average(values) {
   if (!values.length) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -879,6 +884,30 @@ function App() {
   const marketRegime = useMemo(() => deriveMarketRegime(pulseSummary, rankedSignals), [pulseSummary, rankedSignals]);
   const topSignal = rankedSignals[0] || null;
   const aiEngineDisplay = aiMeta?.engine ? String(aiMeta.engine).replace(/-/g, " ") : "standby";
+  const aiFutureProjection = useMemo(() => {
+    if (!aiInsight || typeof aiInsight !== "object") return null;
+    const projection =
+      aiInsight.futureProjection && typeof aiInsight.futureProjection === "object"
+        ? aiInsight.futureProjection
+        : null;
+    if (!projection) return null;
+
+    const predictedPrice = toFiniteNumber(projection.predictedPrice);
+    const expectedMovePct = toFiniteNumber(projection.expectedMovePct);
+    const rangeLow = toFiniteNumber(projection.rangeLow);
+    const rangeHigh = toFiniteNumber(projection.rangeHigh);
+    const horizonDays = Math.max(1, toFiniteNumber(projection.horizonDays) || 30);
+    const uncertaintyPct = toFiniteNumber(projection.uncertaintyPct);
+    return {
+      predictedPrice,
+      expectedMovePct,
+      rangeLow,
+      rangeHigh,
+      horizonDays,
+      uncertaintyPct,
+      method: projection.method || "model",
+    };
+  }, [aiInsight]);
 
   const signalChecklist = useMemo(() => {
     if (!focusMetrics) return [];
@@ -1843,6 +1872,44 @@ function App() {
                 <div>
                   <span>First Target</span>
                   <strong>{aiInsight?.tacticalLevels?.firstTarget || "N/A"}</strong>
+                </div>
+              </div>
+
+              <div className="future-projection">
+                <div className="projection-card projection-primary">
+                  <span>Future Price Prediction</span>
+                  <strong>
+                    {toFiniteNumber(aiFutureProjection?.predictedPrice) !== null
+                      ? formatCurrency(aiFutureProjection.predictedPrice)
+                      : "N/A"}
+                  </strong>
+                  <small>{aiFutureProjection ? `${aiFutureProjection.horizonDays}-day horizon` : "Horizon unavailable"}</small>
+                </div>
+                <div className="projection-card">
+                  <span>Expected Move</span>
+                  <strong className={toneClass(aiFutureProjection?.expectedMovePct || 0)}>
+                    {toFiniteNumber(aiFutureProjection?.expectedMovePct) !== null
+                      ? formatPercent(aiFutureProjection.expectedMovePct)
+                      : "N/A"}
+                  </strong>
+                </div>
+                <div className="projection-card">
+                  <span>Projected Range</span>
+                  <strong>
+                    {toFiniteNumber(aiFutureProjection?.rangeLow) !== null &&
+                    toFiniteNumber(aiFutureProjection?.rangeHigh) !== null
+                      ? `${formatCurrency(aiFutureProjection.rangeLow)} - ${formatCurrency(
+                          aiFutureProjection.rangeHigh
+                        )}`
+                      : "N/A"}
+                  </strong>
+                </div>
+                <div className="projection-card">
+                  <span>Prediction Model</span>
+                  <strong>{aiFutureProjection?.method || aiMeta?.engine || "heuristic"}</strong>
+                  {toFiniteNumber(aiFutureProjection?.uncertaintyPct) !== null ? (
+                    <small>Band ±{aiFutureProjection.uncertaintyPct.toFixed(2)}%</small>
+                  ) : null}
                 </div>
               </div>
 
