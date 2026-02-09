@@ -11,7 +11,31 @@ function toChartTime(candle) {
   return candle.date;
 }
 
-export default function AdvancedChart({ dataByTicker, mode = "candlestick", theme = "night" }) {
+function buildMovingAverage(data, period) {
+  if (!data?.length || period <= 1) return [];
+  const output = [];
+  let rolling = 0;
+  for (let i = 0; i < data.length; i += 1) {
+    rolling += data[i].close;
+    if (i >= period) rolling -= data[i - period].close;
+    if (i >= period - 1) {
+      output.push({
+        time: data[i].time,
+        value: rolling / period,
+      });
+    }
+  }
+  return output;
+}
+
+export default function AdvancedChart({
+  dataByTicker,
+  mode = "candlestick",
+  theme = "night",
+  focusTicker = "",
+  focusMetrics = null,
+  indicators = {},
+}) {
   const chartContainerRef = useRef(null);
 
   useEffect(() => {
@@ -44,6 +68,9 @@ export default function AdvancedChart({ dataByTicker, mode = "candlestick", them
       },
     });
 
+    let focusSeries = null;
+    let focusFormatted = null;
+
     Object.entries(dataByTicker).forEach(([ticker, candles], index) => {
       const color = SERIES_COLORS[index % SERIES_COLORS.length];
       const formatted = (candles || [])
@@ -61,11 +88,15 @@ export default function AdvancedChart({ dataByTicker, mode = "candlestick", them
       if (mode === "line") {
         const lineSeries = chart.addLineSeries({
           color,
-          lineWidth: 2.5,
+          lineWidth: ticker === focusTicker ? 3 : 2.1,
           title: ticker,
           priceLineVisible: false,
         });
         lineSeries.setData(formatted.map((item) => ({ time: item.time, value: item.close })));
+        if (ticker === focusTicker) {
+          focusSeries = lineSeries;
+          focusFormatted = formatted;
+        }
       } else {
         const candleSeries = chart.addCandlestickSeries({
           upColor: color,
@@ -76,8 +107,57 @@ export default function AdvancedChart({ dataByTicker, mode = "candlestick", them
           priceLineVisible: false,
         });
         candleSeries.setData(formatted);
+        if (ticker === focusTicker) {
+          focusSeries = candleSeries;
+          focusFormatted = formatted;
+        }
       }
     });
+
+    if (focusFormatted && focusFormatted.length) {
+      if (indicators?.sma20) {
+        const sma20Series = chart.addLineSeries({
+          color: theme === "night" ? "#90a7ff" : "#3d5bba",
+          lineWidth: 1.8,
+          lineStyle: 1,
+          priceLineVisible: false,
+        });
+        sma20Series.setData(buildMovingAverage(focusFormatted, 20));
+      }
+
+      if (indicators?.sma50) {
+        const sma50Series = chart.addLineSeries({
+          color: theme === "night" ? "#f4c46b" : "#a5641f",
+          lineWidth: 1.8,
+          lineStyle: 2,
+          priceLineVisible: false,
+        });
+        sma50Series.setData(buildMovingAverage(focusFormatted, 50));
+      }
+    }
+
+    if (focusSeries && focusMetrics) {
+      if (indicators?.support) {
+        focusSeries.createPriceLine({
+          price: focusMetrics.support,
+          color: "rgba(91, 231, 196, 0.8)",
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: "Support",
+        });
+      }
+      if (indicators?.resistance) {
+        focusSeries.createPriceLine({
+          price: focusMetrics.resistance,
+          color: "rgba(255, 128, 160, 0.85)",
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: "Resistance",
+        });
+      }
+    }
 
     chart.timeScale().fitContent();
 
@@ -90,7 +170,7 @@ export default function AdvancedChart({ dataByTicker, mode = "candlestick", them
       resizeObserver.disconnect();
       chart.remove();
     };
-  }, [dataByTicker, mode, theme]);
+  }, [dataByTicker, mode, theme, focusTicker, focusMetrics, indicators]);
 
   return <div ref={chartContainerRef} className="advanced-chart-canvas" />;
 }

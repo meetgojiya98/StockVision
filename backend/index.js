@@ -153,6 +153,186 @@ function classifyMomentum(rsi) {
   return "Neutral";
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function average(values) {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function computeAtr(candles, period = 14) {
+  if (!candles?.length) return 0;
+  const trValues = candles.map((candle, index) => {
+    if (index === 0) return candle.high - candle.low;
+    const prevClose = candles[index - 1].close;
+    return Math.max(
+      candle.high - candle.low,
+      Math.abs(candle.high - prevClose),
+      Math.abs(candle.low - prevClose)
+    );
+  });
+
+  const lookback = trValues.length >= period ? trValues.slice(-period) : trValues;
+  return average(lookback);
+}
+
+function computePerformance(closes, lookback) {
+  if (closes.length <= lookback) return 0;
+  const reference = closes[closes.length - lookback - 1];
+  const latest = closes.at(-1);
+  if (!reference) return 0;
+  return ((latest - reference) / reference) * 100;
+}
+
+function computeMaxDrawdown(closes) {
+  if (!closes.length) return 0;
+  let peak = closes[0];
+  let maxDrawdown = 0;
+  closes.forEach((close) => {
+    if (close > peak) peak = close;
+    const drawdown = ((close - peak) / peak) * 100;
+    if (drawdown < maxDrawdown) maxDrawdown = drawdown;
+  });
+  return Math.abs(maxDrawdown);
+}
+
+function classifyVolumeTrend(volumes) {
+  if (volumes.length < 20) return "Stable";
+  const recent = average(volumes.slice(-10));
+  const prior = average(volumes.slice(-20, -10));
+  if (!prior) return "Stable";
+  const shift = (recent - prior) / prior;
+  if (shift > 0.15) return "Increasing";
+  if (shift < -0.15) return "Declining";
+  return "Stable";
+}
+
+function classifyRiskLevel(volatility, maxDrawdown, atrPct) {
+  if (volatility > 45 || maxDrawdown > 30 || atrPct > 5) return "High";
+  if (volatility > 28 || maxDrawdown > 18 || atrPct > 3) return "Medium";
+  return "Low";
+}
+
+function buildSignalScore({
+  trend,
+  momentum,
+  performance20,
+  volatility,
+  distanceToResistancePct,
+  distanceToSupportPct,
+  volumeTrend,
+}) {
+  let score = 50;
+
+  if (trend === "Bullish") score += 12;
+  if (trend === "Bearish") score -= 12;
+
+  if (momentum === "Positive") score += 8;
+  if (momentum === "Negative") score -= 8;
+  if (momentum === "Oversold") score += 5;
+  if (momentum === "Overbought") score -= 5;
+
+  score += clamp(performance20 * 0.7, -14, 14);
+  score -= clamp((volatility - 25) * 0.4, 0, 14);
+
+  if (distanceToResistancePct < 2) score -= 6;
+  if (distanceToSupportPct < 2) score += 4;
+
+  if (volumeTrend === "Increasing") score += 4;
+  if (volumeTrend === "Declining") score -= 4;
+
+  return Math.round(clamp(score, 0, 100));
+}
+
+function buildSignalFlags({
+  trend,
+  momentum,
+  performance5,
+  performance20,
+  atrPct,
+  distanceToResistancePct,
+  distanceToSupportPct,
+  volumeTrend,
+}) {
+  const flags = [];
+
+  if (trend === "Bullish") flags.push("Trend aligned up");
+  if (trend === "Bearish") flags.push("Trend pressure down");
+
+  if (momentum === "Overbought") flags.push("RSI overbought");
+  if (momentum === "Oversold") flags.push("RSI oversold");
+
+  if (performance20 > 10) flags.push("Strong 1M relative strength");
+  if (performance20 < -10) flags.push("Weak 1M performance");
+
+  if (performance5 > 4) flags.push("Short-term acceleration");
+  if (performance5 < -4) flags.push("Short-term pullback");
+
+  if (distanceToResistancePct < 2) flags.push("Trading near resistance");
+  if (distanceToSupportPct < 2) flags.push("Trading near support");
+
+  if (atrPct > 3) flags.push("High ATR regime");
+  if (volumeTrend === "Increasing") flags.push("Volume expansion");
+
+  return flags.slice(0, 6);
+}
+
+function computeCorrelation(seriesA, seriesB) {
+  const minLength = Math.min(seriesA.length, seriesB.length);
+  if (minLength < 8) return 0;
+
+  const a = seriesA.slice(-Math.min(minLength, 90));
+  const b = seriesB.slice(-Math.min(minLength, 90));
+
+  const meanA = average(a);
+  const meanB = average(b);
+  let numerator = 0;
+  let denomA = 0;
+  let denomB = 0;
+
+  for (let i = 0; i < a.length; i += 1) {
+    const da = a[i] - meanA;
+    const db = b[i] - meanB;
+    numerator += da * db;
+    denomA += da * da;
+    denomB += db * db;
+  }
+
+  const denominator = Math.sqrt(denomA * denomB);
+  if (!denominator) return 0;
+  return numerator / denominator;
+}
+
+function buildCorrelationMatrix(dataByTicker) {
+  const tickers = Object.keys(dataByTicker);
+  const returnsMap = {};
+
+  tickers.forEach((ticker) => {
+    const closes = (dataByTicker[ticker] || []).map((candle) => candle.close);
+    returnsMap[ticker] = closes
+      .slice(1)
+      .map((close, index) => (close - closes[index]) / closes[index])
+      .filter((value) => Number.isFinite(value));
+  });
+
+  const matrix = {};
+  tickers.forEach((left, leftIndex) => {
+    matrix[left] = matrix[left] || {};
+    for (let rightIndex = leftIndex; rightIndex < tickers.length; rightIndex += 1) {
+      const right = tickers[rightIndex];
+      const corr = left === right ? 1 : computeCorrelation(returnsMap[left], returnsMap[right]);
+      const rounded = Number(corr.toFixed(2));
+      matrix[left][right] = rounded;
+      matrix[right] = matrix[right] || {};
+      matrix[right][left] = rounded;
+    }
+  });
+
+  return matrix;
+}
+
 function deriveMetrics(candles) {
   if (!candles?.length) {
     return {
@@ -169,6 +349,17 @@ function deriveMetrics(candles) {
       momentum: "Neutral",
       support: 0,
       resistance: 0,
+      atr14: 0,
+      atrPct: 0,
+      performance5: 0,
+      performance20: 0,
+      maxDrawdown: 0,
+      volumeTrend: "Stable",
+      distanceToSupportPct: 0,
+      distanceToResistancePct: 0,
+      riskLevel: "Low",
+      signalScore: 50,
+      signalFlags: [],
     };
   }
 
@@ -194,6 +385,34 @@ function deriveMetrics(candles) {
   const momentum = classifyMomentum(rsi14);
   const support = Math.min(...lows.slice(-20));
   const resistance = Math.max(...highs.slice(-20));
+  const atr14 = computeAtr(candles, 14);
+  const atrPct = lastClose ? (atr14 / lastClose) * 100 : 0;
+  const performance5 = computePerformance(closes, 5);
+  const performance20 = computePerformance(closes, 20);
+  const maxDrawdown = computeMaxDrawdown(closes);
+  const volumeTrend = classifyVolumeTrend(volumes);
+  const distanceToSupportPct = lastClose ? ((lastClose - support) / lastClose) * 100 : 0;
+  const distanceToResistancePct = lastClose ? ((resistance - lastClose) / lastClose) * 100 : 0;
+  const signalScore = buildSignalScore({
+    trend,
+    momentum,
+    performance20,
+    volatility,
+    distanceToResistancePct,
+    distanceToSupportPct,
+    volumeTrend,
+  });
+  const riskLevel = classifyRiskLevel(volatility, maxDrawdown, atrPct);
+  const signalFlags = buildSignalFlags({
+    trend,
+    momentum,
+    performance5,
+    performance20,
+    atrPct,
+    distanceToResistancePct,
+    distanceToSupportPct,
+    volumeTrend,
+  });
 
   return {
     lastClose,
@@ -209,6 +428,17 @@ function deriveMetrics(candles) {
     momentum,
     support,
     resistance,
+    atr14,
+    atrPct,
+    performance5,
+    performance20,
+    maxDrawdown,
+    volumeTrend,
+    distanceToSupportPct,
+    distanceToResistancePct,
+    riskLevel,
+    signalScore,
+    signalFlags,
   };
 }
 
@@ -253,18 +483,32 @@ function buildHeuristicInsight({ ticker, metrics, riskProfile, question }) {
     "Re-evaluate if price closes beyond the 20-day regime for two sessions.",
   ];
 
+  const tacticalLevels =
+    metrics.trend === "Bearish"
+      ? {
+          entryZone: `${(metrics.resistance * 0.98).toFixed(2)} - ${metrics.resistance.toFixed(2)}`,
+          invalidation: (metrics.resistance * 1.03).toFixed(2),
+          firstTarget: (metrics.support * 1.01).toFixed(2),
+        }
+      : {
+          entryZone: `${metrics.support.toFixed(2)} - ${(metrics.support * 1.02).toFixed(2)}`,
+          invalidation: (metrics.support * 0.97).toFixed(2),
+          firstTarget: (metrics.resistance * 0.99).toFixed(2),
+        };
+
   return {
     summary: `${ticker} shows ${direction} pressure with a ${metrics.trend.toLowerCase()} trend profile. For a ${riskProfile} profile, focus on ${riskTone}.`,
     setups,
     risks,
     catalysts,
     actionItems,
-    confidence: Math.max(35, Math.min(82, Math.round(55 + metrics.changePct))),
+    confidence: clamp(Math.round(metrics.signalScore + metrics.performance5), 30, 88),
+    tacticalLevels,
     answeredQuestion: question || "General strategy brief",
   };
 }
 
-async function buildOpenAiInsight({ ticker, candles, metrics, riskProfile, question }) {
+async function buildOpenAiInsight({ ticker, candles, metrics, riskProfile, question, context }) {
   if (!OPENAI_API_KEY) return null;
 
   const trimmedCandles = candles.slice(-60).map((candle) => ({
@@ -281,6 +525,7 @@ async function buildOpenAiInsight({ ticker, candles, metrics, riskProfile, quest
     question,
     metrics,
     candles: trimmedCandles,
+    context: context || null,
   };
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -297,7 +542,7 @@ async function buildOpenAiInsight({ ticker, candles, metrics, riskProfile, quest
         {
           role: "system",
           content:
-            "You are a systematic market strategist. Return strict JSON with keys: summary (string), setups (string[]), risks (string[]), catalysts (string[]), actionItems (string[]), confidence (number 0-100), answeredQuestion (string). Keep claims tethered to provided data.",
+            "You are a systematic market strategist. Return strict JSON with keys: summary (string), setups (string[]), risks (string[]), catalysts (string[]), actionItems (string[]), confidence (number 0-100), tacticalLevels ({entryZone, invalidation, firstTarget}), answeredQuestion (string). Keep claims tethered to provided data.",
         },
         {
           role: "user",
@@ -323,6 +568,11 @@ async function buildOpenAiInsight({ ticker, candles, metrics, riskProfile, quest
       catalysts: [],
       actionItems: [],
       confidence: 55,
+      tacticalLevels: {
+        entryZone: "Data unavailable",
+        invalidation: "Data unavailable",
+        firstTarget: "Data unavailable",
+      },
       answeredQuestion: question || "General strategy brief",
     };
   }
@@ -334,6 +584,11 @@ async function buildOpenAiInsight({ ticker, candles, metrics, riskProfile, quest
     catalysts: Array.isArray(parsed.catalysts) ? parsed.catalysts.map(String) : [],
     actionItems: Array.isArray(parsed.actionItems) ? parsed.actionItems.map(String) : [],
     confidence: toNumber(parsed.confidence),
+    tacticalLevels: {
+      entryZone: String(parsed?.tacticalLevels?.entryZone || "N/A"),
+      invalidation: String(parsed?.tacticalLevels?.invalidation || "N/A"),
+      firstTarget: String(parsed?.tacticalLevels?.firstTarget || "N/A"),
+    },
     answeredQuestion: String(parsed.answeredQuestion || question || "General strategy brief"),
   };
 }
@@ -463,11 +718,29 @@ app.post("/api/stock-candles-multi", async (req, res) => {
       };
     }
 
+    const leaderboard = Object.entries(data)
+      .map(([ticker, payload]) => ({
+        ticker,
+        score: payload.metrics.signalScore,
+        riskLevel: payload.metrics.riskLevel,
+        trend: payload.metrics.trend,
+        momentum: payload.metrics.momentum,
+        changePct: Number(payload.metrics.changePct.toFixed(2)),
+        performance20: Number(payload.metrics.performance20.toFixed(2)),
+      }))
+      .sort((left, right) => right.score - left.score);
+
+    const correlations = buildCorrelationMatrix(
+      Object.fromEntries(Object.entries(data).map(([ticker, payload]) => [ticker, payload.candles]))
+    );
+
     res.json({
       meta: {
         interval: rangeConfig.interval,
         outputsize: rangeConfig.outputsize,
         range: rangeConfig.label,
+        leaderboard,
+        correlations,
       },
       data,
     });
@@ -527,7 +800,40 @@ app.get("/api/market-pulse", async (req, res) => {
       }
       output.push(quote);
     }
-    res.json({ data: output });
+
+    const advancers = output.filter((item) => item.percentChange > 0).length;
+    const decliners = output.filter((item) => item.percentChange < 0).length;
+    const unchanged = output.length - advancers - decliners;
+    const avgMove =
+      output.reduce((sum, item) => sum + item.percentChange, 0) / (output.length || 1);
+    const sorted = output
+      .slice()
+      .sort((left, right) => right.percentChange - left.percentChange);
+
+    const summary = {
+      advancers,
+      decliners,
+      unchanged,
+      avgMove: Number(avgMove.toFixed(2)),
+      breadth:
+        decliners === 0
+          ? "Positive breadth"
+          : advancers / decliners > 1.2
+          ? "Positive breadth"
+          : advancers / decliners < 0.8
+          ? "Negative breadth"
+          : "Balanced breadth",
+      leaders: sorted.slice(0, 3).map((item) => ({
+        symbol: item.symbol,
+        percentChange: item.percentChange,
+      })),
+      laggards: sorted.slice(-3).reverse().map((item) => ({
+        symbol: item.symbol,
+        percentChange: item.percentChange,
+      })),
+    };
+
+    res.json({ data: output, summary });
   } catch (error) {
     console.error("market-pulse error", error);
     res.status(500).json({ error: error.message || "Failed to fetch market pulse" });
@@ -535,7 +841,14 @@ app.get("/api/market-pulse", async (req, res) => {
 });
 
 app.post("/api/ai/insight", async (req, res) => {
-  const { ticker, candles = [], metrics, riskProfile = "balanced", question = "" } = req.body || {};
+  const {
+    ticker,
+    candles = [],
+    metrics,
+    riskProfile = "balanced",
+    question = "",
+    context = null,
+  } = req.body || {};
   const symbol = normalizeTicker(ticker);
 
   if (!symbol) {
@@ -556,6 +869,7 @@ app.post("/api/ai/insight", async (req, res) => {
         metrics: usableMetrics,
         riskProfile,
         question,
+        context,
       });
       if (insight) engine = "openai";
     }

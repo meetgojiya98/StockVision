@@ -16,6 +16,40 @@ const MODE_OPTIONS = [
   { value: "line", label: "Lines" },
 ];
 const RISK_OPTIONS = ["conservative", "balanced", "aggressive"];
+const STRATEGY_STYLE_OPTIONS = [
+  { value: "tactical", label: "Tactical" },
+  { value: "swing", label: "Swing" },
+  { value: "portfolio", label: "Portfolio" },
+];
+const SCANNER_PROFILE_OPTIONS = [
+  { value: "momentum", label: "Momentum" },
+  { value: "mean_reversion", label: "Mean Reversion" },
+  { value: "breakout", label: "Breakout" },
+];
+const AUTO_REFRESH_OPTIONS = [
+  { value: 0, label: "Manual" },
+  { value: 30, label: "30s" },
+  { value: 60, label: "60s" },
+  { value: 120, label: "120s" },
+];
+const INDICATOR_OPTIONS = [
+  { key: "sma20", label: "SMA20" },
+  { key: "sma50", label: "SMA50" },
+  { key: "support", label: "Support" },
+  { key: "resistance", label: "Resistance" },
+];
+const BASKET_PRESETS = [
+  { label: "Big Tech", tickers: ["AAPL", "MSFT", "NVDA", "GOOGL", "META"] },
+  { label: "AI Stack", tickers: ["NVDA", "AMD", "AVGO", "SMCI", "TSM"] },
+  { label: "Index Core", tickers: ["SPY", "QQQ", "IWM", "DIA"] },
+  { label: "Energy", tickers: ["XOM", "CVX", "COP", "SLB"] },
+];
+const QUICK_PROMPTS = [
+  "Design a high-probability entry plan with invalidation and first target.",
+  "What signals would confirm continuation vs fakeout this week?",
+  "Build a defensive plan if macro volatility spikes.",
+  "Rank this setup for risk/reward compared with SPY.",
+];
 const STAGGER_ITEM = { duration: 0.45, ease: "easeOut" };
 
 function usePersistentState(key, fallbackValue) {
@@ -42,6 +76,10 @@ function normalizeTicker(rawValue) {
     .replace(/[^A-Z0-9./-]/g, "");
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function formatCurrency(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "$0.00";
@@ -58,10 +96,55 @@ function formatPercent(value) {
   return `${numeric >= 0 ? "+" : ""}${numeric.toFixed(2)}%`;
 }
 
+function formatCompactNumber(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "0";
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(numeric);
+}
+
 function toneClass(value) {
   if (value > 0) return "tone-positive";
   if (value < 0) return "tone-negative";
   return "tone-neutral";
+}
+
+function riskClass(riskLevel) {
+  if (riskLevel === "High") return "risk-high";
+  if (riskLevel === "Medium") return "risk-medium";
+  return "risk-low";
+}
+
+function scoreByProfile(metrics, profile) {
+  if (!metrics) return 0;
+  const base = Number(metrics.signalScore || 50);
+
+  if (profile === "mean_reversion") {
+    let score = 50;
+    score += metrics.rsi14 < 35 ? 18 : 0;
+    score += metrics.rsi14 > 70 ? -18 : 0;
+    score += clamp(metrics.distanceToSupportPct * 0.8, -10, 10);
+    score += clamp(-metrics.performance5 * 0.9, -15, 15);
+    score += metrics.trend === "Range-bound" ? 8 : 0;
+    return Math.round(clamp(score, 0, 100));
+  }
+
+  if (profile === "breakout") {
+    let score = base;
+    score += metrics.distanceToResistancePct < 2.5 ? 14 : 0;
+    score += metrics.volumeTrend === "Increasing" ? 9 : 0;
+    score += clamp(metrics.performance5 * 1.1, -12, 14);
+    score += metrics.trend === "Bullish" ? 6 : 0;
+    return Math.round(clamp(score, 0, 100));
+  }
+
+  let score = base;
+  score += clamp(metrics.performance20 * 0.7, -14, 14);
+  score += metrics.trend === "Bullish" ? 8 : metrics.trend === "Bearish" ? -8 : 0;
+  score += metrics.momentum === "Positive" ? 4 : metrics.momentum === "Negative" ? -4 : 0;
+  return Math.round(clamp(score, 0, 100));
 }
 
 function SegmentGroup({ options, value, onChange }) {
@@ -85,7 +168,7 @@ function SegmentGroup({ options, value, onChange }) {
   );
 }
 
-function MetricCard({ label, value, detail, tone = "neutral" }) {
+function MetricCard({ label, value, detail, tone = "tone-neutral" }) {
   return (
     <div className="metric-card">
       <p className="metric-label">{label}</p>
@@ -95,11 +178,45 @@ function MetricCard({ label, value, detail, tone = "neutral" }) {
   );
 }
 
+function BrandLogo() {
+  return (
+    <span className="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" role="img">
+        <defs>
+          <linearGradient id="svxGradient" x1="10%" y1="10%" x2="90%" y2="90%">
+            <stop offset="0%" stopColor="#6CF2D4" />
+            <stop offset="52%" stopColor="#5AA4FF" />
+            <stop offset="100%" stopColor="#FF9A6A" />
+          </linearGradient>
+        </defs>
+        <rect x="6" y="6" width="52" height="52" rx="14" fill="rgba(255,255,255,0.08)" />
+        <path
+          d="M16 43 L28 29 L36 37 L48 21"
+          fill="none"
+          stroke="url(#svxGradient)"
+          strokeWidth="5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx="48" cy="21" r="4.5" fill="#6CF2D4" />
+      </svg>
+    </span>
+  );
+}
+
 function App() {
   const [theme, setTheme] = usePersistentState("sv-theme", "day");
   const [selectedTickers, setSelectedTickers] = usePersistentState("sv-selected-tickers", DEFAULT_TICKERS);
   const [range, setRange] = usePersistentState("sv-range", "3M");
   const [chartMode, setChartMode] = usePersistentState("sv-chart-mode", "candlestick");
+  const [scannerProfile, setScannerProfile] = usePersistentState("sv-scanner-profile", "momentum");
+  const [autoRefreshSec, setAutoRefreshSec] = usePersistentState("sv-auto-refresh", 60);
+  const [indicatorConfig, setIndicatorConfig] = usePersistentState("sv-indicators", {
+    sma20: true,
+    sma50: true,
+    support: true,
+    resistance: true,
+  });
 
   const [searchText, setSearchText] = useState("");
   const [suggestions, setSuggestions] = useState([]);
@@ -113,8 +230,10 @@ function App() {
   const [dataError, setDataError] = useState("");
   const [lastRefresh, setLastRefresh] = useState(null);
   const [focusTicker, setFocusTicker] = useState(selectedTickers[0] || "");
+  const scanInFlightRef = useRef(false);
 
   const [marketPulse, setMarketPulse] = useState([]);
+  const [marketPulseSummary, setMarketPulseSummary] = useState(null);
   const [pulseLoading, setPulseLoading] = useState(false);
   const [pulseError, setPulseError] = useState("");
 
@@ -124,11 +243,13 @@ function App() {
   const [scenarioMove, setScenarioMove] = useState(5);
 
   const [riskProfile, setRiskProfile] = useState("balanced");
+  const [strategyStyle, setStrategyStyle] = useState("tactical");
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiInsight, setAiInsight] = useState(null);
   const [aiMeta, setAiMeta] = useState(null);
   const [aiError, setAiError] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiHistory, setAiHistory] = usePersistentState("sv-ai-history", []);
 
   useEffect(() => {
     document.body.classList.remove("theme-night", "theme-day");
@@ -156,13 +277,47 @@ function App() {
     }
   }, [selectedTickers, focusTicker]);
 
+  const addTicker = useCallback(
+    (rawValue) => {
+      const ticker = normalizeTicker(rawValue);
+      if (!ticker) return;
+      setSelectedTickers((previous) => {
+        if (previous.includes(ticker) || previous.length >= 8) return previous;
+        return [...previous, ticker];
+      });
+      setSearchText("");
+      setSuggestions([]);
+      setShowSuggestions(false);
+    },
+    [setSelectedTickers]
+  );
+
+  const addTickerBatch = useCallback(
+    (batchTickers) => {
+      setSelectedTickers((previous) => {
+        const merged = [...new Set([...previous, ...batchTickers.map(normalizeTicker).filter(Boolean)])];
+        return merged.slice(0, 8);
+      });
+    },
+    [setSelectedTickers]
+  );
+
+  const removeTicker = useCallback(
+    (tickerToRemove) => {
+      setSelectedTickers((previous) => previous.filter((ticker) => ticker !== tickerToRemove));
+    },
+    [setSelectedTickers]
+  );
+
   const runMarketScan = useCallback(async () => {
+    if (scanInFlightRef.current) return;
     if (!selectedTickers.length) {
       setDataError("Add at least one ticker to run a market scan.");
       setMarketData({});
       return;
     }
 
+    scanInFlightRef.current = true;
     setLoadingData(true);
     setDataError("");
     try {
@@ -177,6 +332,7 @@ function App() {
       setDataError(error.message || "Unable to load market data.");
     } finally {
       setLoadingData(false);
+      scanInFlightRef.current = false;
     }
   }, [range, selectedTickers]);
 
@@ -186,6 +342,7 @@ function App() {
     try {
       const response = await fetchMarketPulse();
       setMarketPulse(response.data || []);
+      setMarketPulseSummary(response.summary || null);
     } catch (error) {
       setPulseError(error.message || "Unable to fetch market pulse.");
     } finally {
@@ -214,15 +371,18 @@ function App() {
   }, [runMarketScan, refreshPulse]);
 
   useEffect(() => {
-    const pulseTimer = window.setInterval(() => {
-      refreshPulse();
-    }, 60000);
-    return () => window.clearInterval(pulseTimer);
-  }, [refreshPulse]);
-
-  useEffect(() => {
     refreshPortfolioQuotes();
   }, [refreshPortfolioQuotes]);
+
+  useEffect(() => {
+    if (!autoRefreshSec) return undefined;
+    const timer = window.setInterval(() => {
+      runMarketScan();
+      refreshPulse();
+      refreshPortfolioQuotes();
+    }, Number(autoRefreshSec) * 1000);
+    return () => window.clearInterval(timer);
+  }, [autoRefreshSec, refreshPortfolioQuotes, refreshPulse, runMarketScan]);
 
   useEffect(() => {
     if (!searchText || searchText.trim().length < 2) {
@@ -265,26 +425,70 @@ function App() {
   const focusPayload = focusTicker ? marketData[focusTicker] : null;
   const focusMetrics = focusPayload?.metrics;
 
-  const addTicker = useCallback(
-    (rawValue) => {
-      const ticker = normalizeTicker(rawValue);
-      if (!ticker) return;
-      if (selectedTickers.includes(ticker)) return;
-      if (selectedTickers.length >= 8) return;
-      setSelectedTickers((previous) => [...previous, ticker]);
-      setSearchText("");
-      setSuggestions([]);
-      setShowSuggestions(false);
-    },
-    [selectedTickers, setSelectedTickers]
-  );
+  const rankedSignals = useMemo(() => {
+    return selectedTickers
+      .map((ticker) => {
+        const payload = marketData[ticker];
+        const metrics = payload?.metrics;
+        if (!metrics) return null;
+        return {
+          ticker,
+          metrics,
+          profileScore: scoreByProfile(metrics, scannerProfile),
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => right.profileScore - left.profileScore);
+  }, [marketData, scannerProfile, selectedTickers]);
 
-  const removeTicker = useCallback(
-    (tickerToRemove) => {
-      setSelectedTickers((previous) => previous.filter((ticker) => ticker !== tickerToRemove));
-    },
-    [setSelectedTickers]
-  );
+  const averageSignalScore = useMemo(() => {
+    if (!rankedSignals.length) return 0;
+    const sum = rankedSignals.reduce((acc, row) => acc + row.metrics.signalScore, 0);
+    return sum / rankedSignals.length;
+  }, [rankedSignals]);
+
+  const pulseSummary = useMemo(() => {
+    if (marketPulseSummary) return marketPulseSummary;
+    const advancers = marketPulse.filter((item) => item.percentChange > 0).length;
+    const decliners = marketPulse.filter((item) => item.percentChange < 0).length;
+    const unchanged = marketPulse.length - advancers - decliners;
+    const avgMove =
+      marketPulse.reduce((acc, item) => acc + item.percentChange, 0) / (marketPulse.length || 1);
+    return {
+      advancers,
+      decliners,
+      unchanged,
+      avgMove,
+      breadth: "Live breadth",
+      leaders: [],
+      laggards: [],
+    };
+  }, [marketPulse, marketPulseSummary]);
+
+  const signalChecklist = useMemo(() => {
+    if (!focusMetrics) return [];
+    const list = [];
+    if (focusMetrics.trend === "Bullish") list.push("Primary trend is constructive.");
+    if (focusMetrics.trend === "Bearish") list.push("Primary trend remains under pressure.");
+    if (focusMetrics.momentum === "Overbought") list.push("Momentum stretched; avoid chasing weak entries.");
+    if (focusMetrics.momentum === "Oversold") list.push("Momentum compressed; monitor reversal confirmation.");
+    if (focusMetrics.volumeTrend === "Increasing") list.push("Volume is expanding and validating moves.");
+    if (focusMetrics.distanceToResistancePct < 2) list.push("Price is approaching resistance zone.");
+    if (focusMetrics.distanceToSupportPct < 2) list.push("Price is testing nearby support.");
+
+    if (scannerProfile === "breakout") {
+      list.push("Breakout profile: prioritize expansion with volume.");
+    } else if (scannerProfile === "mean_reversion") {
+      list.push("Mean reversion profile: favor stretched conditions into levels.");
+    } else {
+      list.push("Momentum profile: favor trend continuation and pullback entries.");
+    }
+
+    return list.slice(0, 6);
+  }, [focusMetrics, scannerProfile]);
+
+  const correlations = marketMeta?.correlations || {};
+  const correlationTickers = Object.keys(correlations);
 
   const handleSearchSubmit = (event) => {
     event.preventDefault();
@@ -301,6 +505,10 @@ function App() {
       return;
     }
 
+    const question =
+      aiPrompt.trim() ||
+      `Build a ${riskProfile} ${strategyStyle} plan for ${focusTicker} using current signals and risk levels.`;
+
     setAiError("");
     setAiLoading(true);
     try {
@@ -309,12 +517,29 @@ function App() {
         candles: focusPayload.candles,
         metrics: focusPayload.metrics,
         riskProfile,
-        question:
-          aiPrompt.trim() ||
-          `Build a ${riskProfile} swing-trading plan for ${focusTicker} over the next 2-4 weeks.`,
+        question,
+        context: {
+          strategyStyle,
+          scannerProfile,
+          pulse: pulseSummary,
+          focusFlags: focusMetrics?.signalFlags?.slice(0, 5) || [],
+        },
       });
       setAiInsight(response.data || null);
       setAiMeta(response.meta || null);
+      setAiHistory((previous) =>
+        [
+          {
+            id: Date.now(),
+            ticker: focusTicker,
+            prompt: question,
+            createdAt: new Date().toISOString(),
+            insight: response.data || null,
+            meta: response.meta || null,
+          },
+          ...previous,
+        ].slice(0, 8)
+      );
     } catch (error) {
       setAiError(error.message || "Unable to generate AI brief.");
     } finally {
@@ -357,11 +582,12 @@ function App() {
     setPositionForm({ ticker: "", shares: "", avgCost: "" });
   };
 
-  const portfolioRows = useMemo(() => {
+  const basePortfolioRows = useMemo(() => {
     return positions.map((position, index) => {
       const ticker = normalizeTicker(position.ticker);
+      const metrics = marketData[ticker]?.metrics;
       const mark =
-        marketData[ticker]?.metrics?.lastClose ||
+        metrics?.lastClose ||
         quoteSnapshot[ticker]?.price ||
         marketPulse.find((item) => item.symbol === ticker)?.price ||
         0;
@@ -380,12 +606,13 @@ function App() {
         costBasis,
         pnl,
         pnlPct,
+        volatility: metrics?.volatility || 26,
       };
     });
   }, [positions, marketData, quoteSnapshot, marketPulse]);
 
   const portfolioTotals = useMemo(() => {
-    return portfolioRows.reduce(
+    return basePortfolioRows.reduce(
       (totals, row) => {
         totals.marketValue += row.marketValue;
         totals.costBasis += row.costBasis;
@@ -394,10 +621,58 @@ function App() {
       },
       { marketValue: 0, costBasis: 0, pnl: 0 }
     );
+  }, [basePortfolioRows]);
+
+  const portfolioRows = useMemo(() => {
+    return basePortfolioRows.map((row) => {
+      const weight = portfolioTotals.marketValue > 0 ? row.marketValue / portfolioTotals.marketValue : 0;
+      const dailyStd = (row.volatility / 100) / Math.sqrt(252);
+      const varContribution = row.marketValue * 1.65 * dailyStd;
+      return { ...row, weight, varContribution };
+    });
+  }, [basePortfolioRows, portfolioTotals.marketValue]);
+
+  const portfolioDailyVar95 = useMemo(() => {
+    const variance = portfolioRows.reduce(
+      (sum, row) => sum + row.varContribution * row.varContribution,
+      0
+    );
+    return Math.sqrt(variance);
   }, [portfolioRows]);
+
+  const concentrationStats = useMemo(() => {
+    const sorted = portfolioRows.slice().sort((left, right) => right.weight - left.weight);
+    const top1 = sorted[0]?.weight || 0;
+    const top3 = sorted.slice(0, 3).reduce((sum, row) => sum + row.weight, 0);
+    return { top1, top3 };
+  }, [portfolioRows]);
+
+  const rebalanceRows = useMemo(() => {
+    if (portfolioRows.length === 0 || portfolioTotals.marketValue <= 0) return [];
+    const targetValue = portfolioTotals.marketValue / portfolioRows.length;
+
+    return portfolioRows.map((row) => {
+      const deltaValue = targetValue - row.marketValue;
+      const deltaShares = row.mark > 0 ? deltaValue / row.mark : 0;
+      return {
+        ticker: row.ticker,
+        targetValue,
+        deltaValue,
+        deltaShares,
+      };
+    });
+  }, [portfolioRows, portfolioTotals.marketValue]);
 
   const projectedValue = portfolioTotals.marketValue * (1 + scenarioMove / 100);
   const projectedMove = projectedValue - portfolioTotals.marketValue;
+  const scenarioGrid = [-15, -10, -5, 0, 5, 10, 15].map((move) => {
+    const nextValue = portfolioTotals.marketValue * (1 + move / 100);
+    return {
+      move,
+      value: nextValue,
+      pnl: nextValue - portfolioTotals.marketValue,
+    };
+  });
 
   return (
     <div className="app-shell">
@@ -414,7 +689,7 @@ function App() {
         transition={STAGGER_ITEM}
       >
         <div className="brand-wrap">
-          <span className="brand-mark">SV</span>
+          <BrandLogo />
           <div>
             <p className="brand-title">StockVision X</p>
             <p className="brand-subtitle">AI Trading Command Center</p>
@@ -435,24 +710,28 @@ function App() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ ...STAGGER_ITEM, delay: 0.1 }}
       >
-        <p className="hero-eyebrow">Revamped Experience</p>
-        <h1>Build, stress-test, and brief your next move in one cockpit.</h1>
+        <p className="hero-eyebrow">Deeper Feature Suite</p>
+        <h1>Scan, rank, correlate, strategize, and rebalance from one control layer.</h1>
         <p>
-          Multi-symbol analytics, live pulse monitoring, AI strategy narration, and a scenario-aware portfolio lab
-          tuned for fast decisions.
+          Every module now has expanded depth: profile-driven signal scoring, correlation analytics, tactical AI
+          levels, and portfolio risk decomposition.
         </p>
         <div className="hero-stats">
           <div>
             <span>{selectedTickers.length}</span>
-            <p>Active Symbols</p>
+            <p>Tracked Symbols</p>
           </div>
           <div>
-            <span>{marketPulse.length}</span>
-            <p>Pulse Assets</p>
+            <span>{averageSignalScore.toFixed(1)}</span>
+            <p>Avg Signal Score</p>
           </div>
           <div>
             <span>{lastRefresh ? lastRefresh.toLocaleTimeString() : "--:--"}</span>
             <p>Last Scan</p>
+          </div>
+          <div>
+            <span>{autoRefreshSec ? `${autoRefreshSec}s` : "Manual"}</span>
+            <p>Refresh Cadence</p>
           </div>
         </div>
       </motion.section>
@@ -466,7 +745,7 @@ function App() {
         >
           <div className="section-head">
             <h2>Command Deck</h2>
-            <p>Discover symbols, set horizon, and launch a full-market scan.</p>
+            <p>Discovery, presets, profile tuning, and scan cadence in one console.</p>
           </div>
 
           <form className="search-form" ref={suggestionsRef} onSubmit={handleSearchSubmit}>
@@ -510,7 +789,15 @@ function App() {
             {selectedTickers.length === 0 && <p className="hint-text">No symbols selected yet.</p>}
           </div>
 
-          <div className="control-row">
+          <div className="basket-row">
+            {BASKET_PRESETS.map((preset) => (
+              <button key={preset.label} type="button" className="basket-chip" onClick={() => addTickerBatch(preset.tickers)}>
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="control-row control-row-3">
             <div>
               <label>Range</label>
               <SegmentGroup options={RANGE_OPTIONS} value={range} onChange={setRange} />
@@ -518,6 +805,37 @@ function App() {
             <div>
               <label>Chart</label>
               <SegmentGroup options={MODE_OPTIONS} value={chartMode} onChange={setChartMode} />
+            </div>
+            <div>
+              <label>Scanner Profile</label>
+              <SegmentGroup options={SCANNER_PROFILE_OPTIONS} value={scannerProfile} onChange={setScannerProfile} />
+            </div>
+          </div>
+
+          <div className="control-row control-row-2">
+            <div>
+              <label>Auto Refresh</label>
+              <SegmentGroup options={AUTO_REFRESH_OPTIONS} value={autoRefreshSec} onChange={setAutoRefreshSec} />
+            </div>
+            <div>
+              <label>Indicator Overlays</label>
+              <div className="indicator-row">
+                {INDICATOR_OPTIONS.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={`segment-button ${indicatorConfig[item.key] ? "active" : ""}`}
+                    onClick={() =>
+                      setIndicatorConfig((previous) => ({
+                        ...previous,
+                        [item.key]: !previous[item.key],
+                      }))
+                    }
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -542,18 +860,71 @@ function App() {
         >
           <div className="section-head">
             <h2>Market Pulse</h2>
-            <p>Macro and megacap tape for quick context switching.</p>
+            <p>Breadth summary, leaders/laggards, and real-time directional heat.</p>
           </div>
+
+          <div className="pulse-summary-grid">
+            <div>
+              <span>Advancers</span>
+              <strong>{pulseSummary.advancers || 0}</strong>
+            </div>
+            <div>
+              <span>Decliners</span>
+              <strong>{pulseSummary.decliners || 0}</strong>
+            </div>
+            <div>
+              <span>Avg Move</span>
+              <strong className={toneClass(pulseSummary.avgMove)}>{formatPercent(pulseSummary.avgMove || 0)}</strong>
+            </div>
+            <div>
+              <span>Breadth</span>
+              <strong>{pulseSummary.breadth || "N/A"}</strong>
+            </div>
+          </div>
+
           <div className="pulse-list">
             {marketPulse.map((item) => (
               <div key={item.symbol} className="pulse-item">
-                <p>{item.symbol}</p>
+                <div className="pulse-headline">
+                  <p>{item.symbol}</p>
+                  <span className={toneClass(item.percentChange)}>{formatPercent(item.percentChange)}</span>
+                </div>
                 <h4>{formatCurrency(item.price)}</h4>
-                <span className={toneClass(item.percentChange)}>{formatPercent(item.percentChange)}</span>
+                <div className="pulse-bar-track">
+                  <span
+                    className={`pulse-bar-fill ${item.percentChange >= 0 ? "up" : "down"}`}
+                    style={{ width: `${Math.min(100, Math.abs(item.percentChange) * 14)}%` }}
+                  />
+                </div>
               </div>
             ))}
             {marketPulse.length === 0 && <p className="hint-text">{pulseLoading ? "Loading pulse..." : "No pulse data yet."}</p>}
           </div>
+
+          {(pulseSummary.leaders?.length || pulseSummary.laggards?.length) && (
+            <div className="leader-laggard-grid">
+              <div>
+                <h4>Leaders</h4>
+                <ul>
+                  {(pulseSummary.leaders || []).map((item) => (
+                    <li key={`leader-${item.symbol}`}>
+                      {item.symbol} <span className="tone-positive">{formatPercent(item.percentChange)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h4>Laggards</h4>
+                <ul>
+                  {(pulseSummary.laggards || []).map((item) => (
+                    <li key={`laggard-${item.symbol}`}>
+                      {item.symbol} <span className="tone-negative">{formatPercent(item.percentChange)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
         </motion.div>
       </section>
 
@@ -575,16 +946,61 @@ function App() {
             </div>
             <div className="legend-wrap">
               {Object.keys(dataByTicker).map((ticker) => (
-                <span key={ticker} className={`legend-pill ${focusTicker === ticker ? "active" : ""}`}>
+                <button
+                  key={ticker}
+                  type="button"
+                  className={`legend-pill ${focusTicker === ticker ? "active" : ""}`}
+                  onClick={() => setFocusTicker(ticker)}
+                >
                   {ticker}
-                </span>
+                </button>
               ))}
             </div>
           </div>
           {Object.keys(dataByTicker).length > 0 ? (
-            <AdvancedChart dataByTicker={dataByTicker} mode={chartMode} theme={theme} />
+            <AdvancedChart
+              dataByTicker={dataByTicker}
+              mode={chartMode}
+              theme={theme}
+              focusTicker={focusTicker}
+              focusMetrics={focusMetrics}
+              indicators={indicatorConfig}
+            />
           ) : (
             <div className="empty-state">No chart data available. Add symbols and run a market scan.</div>
+          )}
+
+          {correlationTickers.length > 1 && (
+            <div className="correlation-panel">
+              <h3>Cross-Correlation Matrix</h3>
+              <div className="correlation-table-wrap">
+                <table className="correlation-table">
+                  <thead>
+                    <tr>
+                      <th>Ticker</th>
+                      {correlationTickers.map((ticker) => (
+                        <th key={`head-${ticker}`}>{ticker}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {correlationTickers.map((rowTicker) => (
+                      <tr key={`row-${rowTicker}`}>
+                        <th>{rowTicker}</th>
+                        {correlationTickers.map((colTicker) => {
+                          const value = correlations[rowTicker]?.[colTicker] ?? 0;
+                          return (
+                            <td key={`${rowTicker}-${colTicker}`} className={toneClass(value)}>
+                              {Number(value).toFixed(2)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
         </motion.div>
 
@@ -598,7 +1014,7 @@ function App() {
             <div className="section-head inline">
               <div>
                 <h2>Signal Matrix</h2>
-                <p>Focused diagnostics for your active symbol.</p>
+                <p>Ranked scorecard with profile-specific ranking.</p>
               </div>
               <select value={focusTicker} onChange={(event) => setFocusTicker(event.target.value)}>
                 {selectedTickers.map((ticker) => (
@@ -609,13 +1025,44 @@ function App() {
               </select>
             </div>
 
-            {focusMetrics ? (
+            {rankedSignals.length > 0 ? (
+              <div className="signal-table-wrap">
+                <table className="signal-table">
+                  <thead>
+                    <tr>
+                      <th>Ticker</th>
+                      <th>Profile</th>
+                      <th>Trend</th>
+                      <th>RSI</th>
+                      <th>1M</th>
+                      <th>Risk</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rankedSignals.map((row) => (
+                      <tr key={row.ticker} onClick={() => setFocusTicker(row.ticker)}>
+                        <td className={focusTicker === row.ticker ? "focus-row" : ""}>{row.ticker}</td>
+                        <td>{row.profileScore}</td>
+                        <td>{row.metrics.trend}</td>
+                        <td>{row.metrics.rsi14.toFixed(1)}</td>
+                        <td className={toneClass(row.metrics.performance20)}>
+                          {formatPercent(row.metrics.performance20)}
+                        </td>
+                        <td>
+                          <span className={`risk-pill ${riskClass(row.metrics.riskLevel)}`}>{row.metrics.riskLevel}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="hint-text">Metrics will populate after the first scan.</p>
+            )}
+
+            {focusMetrics && (
               <div className="metrics-grid">
-                <MetricCard
-                  label="Last Price"
-                  value={formatCurrency(focusMetrics.lastClose)}
-                  detail="Latest close"
-                />
+                <MetricCard label="Last Price" value={formatCurrency(focusMetrics.lastClose)} detail="Latest close" />
                 <MetricCard
                   label="Daily Move"
                   value={formatPercent(focusMetrics.changePct)}
@@ -627,12 +1074,10 @@ function App() {
                   value={formatPercent(focusMetrics.volatility)}
                   detail="Annualized"
                 />
-                <MetricCard label="RSI(14)" value={focusMetrics.rsi14.toFixed(1)} detail={focusMetrics.momentum} />
-                <MetricCard label="Trend" value={focusMetrics.trend} detail="SMA 20/50 regime" />
-                <MetricCard label="Avg Volume" value={Math.round(focusMetrics.avgVolume).toLocaleString()} detail="Recent mean" />
+                <MetricCard label="ATR(14)" value={focusMetrics.atr14.toFixed(2)} detail={formatPercent(focusMetrics.atrPct)} />
+                <MetricCard label="Signal Score" value={String(focusMetrics.signalScore)} detail="Composite rank" />
+                <MetricCard label="Max Drawdown" value={formatPercent(-focusMetrics.maxDrawdown)} detail="Lookback peak-to-trough" />
               </div>
-            ) : (
-              <p className="hint-text">Metrics will populate after the first scan.</p>
             )}
           </motion.div>
 
@@ -644,26 +1089,45 @@ function App() {
           >
             <h3>Risk Radar</h3>
             {focusMetrics ? (
-              <div className="radar-list">
-                <div>
-                  <span>Support</span>
-                  <strong>{formatCurrency(focusMetrics.support)}</strong>
+              <>
+                <div className="radar-list">
+                  <div>
+                    <span>Support</span>
+                    <strong>{formatCurrency(focusMetrics.support)}</strong>
+                  </div>
+                  <div>
+                    <span>Resistance</span>
+                    <strong>{formatCurrency(focusMetrics.resistance)}</strong>
+                  </div>
+                  <div>
+                    <span>SMA 20 / 50</span>
+                    <strong>
+                      {formatCurrency(focusMetrics.sma20)} / {formatCurrency(focusMetrics.sma50)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Volume Regime</span>
+                    <strong>{focusMetrics.volumeTrend}</strong>
+                  </div>
                 </div>
-                <div>
-                  <span>Resistance</span>
-                  <strong>{formatCurrency(focusMetrics.resistance)}</strong>
+
+                <div className="checklist-panel">
+                  <h4>Thesis Checklist</h4>
+                  <ul>
+                    {signalChecklist.map((item, index) => (
+                      <li key={`check-${index}`}>{item}</li>
+                    ))}
+                  </ul>
                 </div>
-                <div>
-                  <span>SMA 20 / 50</span>
-                  <strong>
-                    {formatCurrency(focusMetrics.sma20)} / {formatCurrency(focusMetrics.sma50)}
-                  </strong>
+
+                <div className="flag-panel">
+                  {(focusMetrics.signalFlags || []).map((flag) => (
+                    <span key={flag} className="flag-chip">
+                      {flag}
+                    </span>
+                  ))}
                 </div>
-                <div>
-                  <span>Momentum</span>
-                  <strong>{focusMetrics.momentum}</strong>
-                </div>
-              </div>
+              </>
             ) : (
               <p className="hint-text">No risk radar yet.</p>
             )}
@@ -680,7 +1144,7 @@ function App() {
         >
           <div className="section-head">
             <h2>AI Strategy Copilot</h2>
-            <p>Get a structured brief with setups, risks, catalysts, and action items.</p>
+            <p>Tactical levels + structured brief history with reusable prompt shortcuts.</p>
           </div>
 
           <div className="ai-controls">
@@ -689,11 +1153,25 @@ function App() {
               <SegmentGroup options={RISK_OPTIONS} value={riskProfile} onChange={setRiskProfile} />
             </div>
             <div>
+              <label>Strategy Style</label>
+              <SegmentGroup options={STRATEGY_STYLE_OPTIONS} value={strategyStyle} onChange={setStrategyStyle} />
+            </div>
+            <div>
+              <label>Quick Prompt Library</label>
+              <div className="quick-prompt-row">
+                {QUICK_PROMPTS.map((prompt) => (
+                  <button key={prompt} type="button" className="basket-chip" onClick={() => setAiPrompt(prompt)}>
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
               <label>Prompt</label>
               <textarea
                 value={aiPrompt}
                 onChange={(event) => setAiPrompt(event.target.value)}
-                placeholder="Ask for an entry plan, invalidation level, scaling logic, or risk budget."
+                placeholder="Ask for entry sequencing, risk laddering, hedge conditions, and invalidation logic."
               />
             </div>
           </div>
@@ -709,6 +1187,21 @@ function App() {
                 Engine: {aiMeta?.engine || "unknown"} {aiMeta?.model ? `· ${aiMeta.model}` : ""}
               </p>
               <h4>{aiInsight.summary}</h4>
+
+              <div className="tactical-levels">
+                <div>
+                  <span>Entry Zone</span>
+                  <strong>{aiInsight?.tacticalLevels?.entryZone || "N/A"}</strong>
+                </div>
+                <div>
+                  <span>Invalidation</span>
+                  <strong>{aiInsight?.tacticalLevels?.invalidation || "N/A"}</strong>
+                </div>
+                <div>
+                  <span>First Target</span>
+                  <strong>{aiInsight?.tacticalLevels?.firstTarget || "N/A"}</strong>
+                </div>
+              </div>
 
               <div className="ai-grid">
                 <div>
@@ -746,8 +1239,32 @@ function App() {
               </div>
               <p className="confidence-text">Confidence: {Number(aiInsight.confidence || 0).toFixed(0)} / 100</p>
               <p className="hint-text">
-                Educational context only. Always validate with independent research and position sizing rules.
+                Educational context only. Validate with your own research, liquidity checks, and risk limits.
               </p>
+            </div>
+          )}
+
+          {aiHistory.length > 0 && (
+            <div className="ai-history">
+              <h4>Recent Briefs</h4>
+              <div className="ai-history-list">
+                {aiHistory.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    onClick={() => {
+                      setFocusTicker(entry.ticker);
+                      setAiPrompt(entry.prompt);
+                      setAiInsight(entry.insight);
+                      setAiMeta(entry.meta);
+                    }}
+                  >
+                    <strong>{entry.ticker}</strong>
+                    <span>{new Date(entry.createdAt).toLocaleTimeString()}</span>
+                    <p>{entry.prompt}</p>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </motion.div>
@@ -760,7 +1277,7 @@ function App() {
         >
           <div className="section-head">
             <h2>Portfolio Lab</h2>
-            <p>Track live valuation and run quick scenario shocks.</p>
+            <p>Live P/L, concentration analytics, VaR, rebalancing targets, and scenario lattice.</p>
           </div>
 
           <form className="portfolio-form" onSubmit={handleAddPosition}>
@@ -789,17 +1306,19 @@ function App() {
           </form>
 
           <div className="portfolio-table">
-            <div className="portfolio-head">
+            <div className="portfolio-head portfolio-head-depth">
               <span>Ticker</span>
               <span>Shares</span>
+              <span>Weight</span>
               <span>Mark</span>
               <span>P/L</span>
               <span />
             </div>
             {portfolioRows.map((row) => (
-              <div key={row.id} className="portfolio-row">
+              <div key={row.id} className="portfolio-row portfolio-row-depth">
                 <span>{row.ticker}</span>
                 <span>{row.shares}</span>
+                <span>{formatPercent(row.weight * 100)}</span>
                 <span>{formatCurrency(row.mark)}</span>
                 <span className={toneClass(row.pnlPct)}>
                   {formatCurrency(row.pnl)} ({formatPercent(row.pnlPct)})
@@ -817,7 +1336,7 @@ function App() {
             {portfolioRows.length === 0 && <p className="hint-text">No positions yet. Add holdings to begin stress testing.</p>}
           </div>
 
-          <div className="portfolio-summary">
+          <div className="portfolio-summary portfolio-summary-4">
             <div>
               <span>Total Value</span>
               <strong>{formatCurrency(portfolioTotals.marketValue)}</strong>
@@ -836,7 +1355,43 @@ function App() {
                 )
               </strong>
             </div>
+            <div>
+              <span>Daily VaR (95%)</span>
+              <strong>{formatCurrency(portfolioDailyVar95)}</strong>
+            </div>
           </div>
+
+          <div className="concentration-grid">
+            <div>
+              <span>Top Position</span>
+              <strong>{formatPercent(concentrationStats.top1 * 100)}</strong>
+            </div>
+            <div>
+              <span>Top 3 Concentration</span>
+              <strong>{formatPercent(concentrationStats.top3 * 100)}</strong>
+            </div>
+            <div>
+              <span>Positions</span>
+              <strong>{portfolioRows.length}</strong>
+            </div>
+          </div>
+
+          {rebalanceRows.length > 1 && (
+            <div className="rebalance-panel">
+              <h4>Equal-Weight Rebalance Guide</h4>
+              <div className="rebalance-list">
+                {rebalanceRows.map((row) => (
+                  <div key={`rebalance-${row.ticker}`}>
+                    <span>{row.ticker}</span>
+                    <span className={toneClass(-row.deltaValue)}>
+                      {row.deltaValue >= 0 ? "Buy" : "Trim"} {formatCompactNumber(Math.abs(row.deltaShares))} sh
+                    </span>
+                    <strong>{formatCurrency(Math.abs(row.deltaValue))}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="scenario-block">
             <label htmlFor="scenario-slider">Scenario Shock: {scenarioMove > 0 ? "+" : ""}{scenarioMove}%</label>
@@ -852,6 +1407,19 @@ function App() {
               Projected Value: {formatCurrency(projectedValue)} ({projectedMove >= 0 ? "+" : ""}
               {formatCurrency(projectedMove)})
             </p>
+          </div>
+
+          <div className="scenario-grid">
+            {scenarioGrid.map((scenario) => (
+              <div key={`scenario-${scenario.move}`}>
+                <span>{scenario.move > 0 ? "+" : ""}{scenario.move}%</span>
+                <strong>{formatCurrency(scenario.value)}</strong>
+                <p className={toneClass(scenario.pnl)}>
+                  {scenario.pnl >= 0 ? "+" : ""}
+                  {formatCurrency(scenario.pnl)}
+                </p>
+              </div>
+            ))}
           </div>
         </motion.div>
       </section>
