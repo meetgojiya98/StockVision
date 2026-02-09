@@ -1,7 +1,10 @@
 require("dotenv").config();
+const crypto = require("crypto");
 const express = require("express");
 const cors = require("cors");
 const fetch = require("node-fetch");
+const fs = require("fs/promises");
+const path = require("path");
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
@@ -9,11 +12,18 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const MARKET_DATA_PROVIDER = process.env.MARKET_DATA_PROVIDER || "yahoo-finance";
 const YAHOO_BASE_URL = "https://query1.finance.yahoo.com";
+const AUTH_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+const DATA_DIR = path.join(__dirname, "data");
+const USERS_FILE = path.join(DATA_DIR, "users.json");
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
 const cache = new Map();
+const activeSessions = new Map();
+let usersStore = { users: [] };
+let usersStoreLoaded = false;
+let usersStoreWriteChain = Promise.resolve();
 const RANGE_CONFIG = {
   "1D": { interval: "5m", range: "1d", outputsize: 96 },
   "5D": { interval: "15m", range: "5d", outputsize: 130 },
@@ -67,6 +77,172 @@ function average(values) {
 
 function normalizeTicker(value) {
   return String(value || "").trim().toUpperCase();
+}
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function sanitizeName(value, fallbackEmail = "") {
+  const cleaned = String(value || "").replace(/\s+/g, " ").trim();
+  if (cleaned) return cleaned.slice(0, 80);
+  const emailPrefix = String(fallbackEmail || "").split("@")[0] || "";
+  return emailPrefix.slice(0, 80) || "Trader";
+}
+
+function isValidEmail(value) {
+  const email = normalizeEmail(value);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function isStrongPassword(value) {
+  return String(value || "").length >= 8;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function sanitizePublicUser(user) {
+  return {
+    id: String(user.id || ""),
+    email: normalizeEmail(user.email),
+    name: sanitizeName(user.name, user.email),
+    createdAt: user.createdAt || null,
+    updatedAt: user.updatedAt || null,
+  };
+}
+
+function hashPassword(password, salt) {
+  return crypto.scryptSync(String(password || ""), String(salt || ""), 64).toString("hex");
+}
+
+function createPasswordRecord(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  return {
+    salt,
+    hash: hashPassword(password, salt),
+  };
+}
+
+function verifyPassword(password, passwordSalt, passwordHash) {
+  if (!passwordSalt || !passwordHash) return false;
+  const computed = hashPassword(password, passwordSalt);
+  const source = Buffer.from(String(passwordHash), "hex");
+  const target = Buffer.from(String(computed), "hex");
+  if (source.length !== target.length) return false;
+  return crypto.timingSafeEqual(source, target);
+}
+
+async function ensureUsersStore() {
+  if (usersStoreLoaded) return;
+  try {
+    const text = await fs.readFile(USERS_FILE, "utf8");
+    const parsed = JSON.parse(text);
+    if (parsed && Array.isArray(parsed.users)) {
+      usersStore = { users: parsed.users };
+    } else {
+      usersStore = { users: [] };
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.error("users-store load error", error);
+    }
+    usersStore = { users: [] };
+  }
+  usersStoreLoaded = true;
+}
+
+function persistUsersStore() {
+  usersStoreWriteChain = usersStoreWriteChain
+    .then(async () => {
+      await fs.mkdir(DATA_DIR, { recursive: true });
+      await fs.writeFile(USERS_FILE, JSON.stringify(usersStore, null, 2));
+    })
+    .catch((error) => {
+      console.error("users-store persist error", error);
+    });
+
+  return usersStoreWriteChain;
+}
+
+function buildUserId() {
+  return `usr_${crypto.randomBytes(10).toString("hex")}`;
+}
+
+function findUserByEmail(email) {
+  const normalized = normalizeEmail(email);
+  return usersStore.users.find((user) => normalizeEmail(user.email) === normalized) || null;
+}
+
+function findUserById(id) {
+  return usersStore.users.find((user) => user.id === id) || null;
+}
+
+function createSession(userId) {
+  const token = crypto.randomBytes(30).toString("hex");
+  activeSessions.set(token, {
+    userId,
+    createdAt: nowIso(),
+    expiresAt: Date.now() + AUTH_SESSION_TTL_MS,
+  });
+  return token;
+}
+
+function resolveSession(token) {
+  const session = activeSessions.get(token);
+  if (!session) return null;
+  if (session.expiresAt <= Date.now()) {
+    activeSessions.delete(token);
+    return null;
+  }
+  session.expiresAt = Date.now() + AUTH_SESSION_TTL_MS;
+  return session;
+}
+
+function clearSession(token) {
+  activeSessions.delete(token);
+}
+
+function parseBearerToken(req) {
+  const header = String(req.headers.authorization || "");
+  if (!header.startsWith("Bearer ")) return "";
+  return header.slice(7).trim();
+}
+
+async function requireAuth(req, res, next) {
+  const token = parseBearerToken(req);
+  if (!token) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+
+  await ensureUsersStore();
+  const session = resolveSession(token);
+  if (!session) {
+    return res.status(401).json({ error: "Session expired. Please sign in again." });
+  }
+
+  const user = findUserById(session.userId);
+  if (!user) {
+    clearSession(token);
+    return res.status(401).json({ error: "Session user not found" });
+  }
+
+  req.auth = { token, user };
+  return next();
+}
+
+function sanitizeProfileState(rawState) {
+  if (!rawState || typeof rawState !== "object" || Array.isArray(rawState)) return null;
+  try {
+    const serialized = JSON.stringify(rawState);
+    if (!serialized || serialized.length > 900000) return null;
+    const parsed = JSON.parse(serialized);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 function parseOpenAiJson(content) {
@@ -1130,6 +1306,141 @@ function runSmaCrossoverBacktest({
   };
 }
 
+app.post("/api/auth/signup", async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const password = String(req.body?.password || "");
+  const name = sanitizeName(req.body?.name, email);
+
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: "Use a valid email address." });
+  }
+  if (!isStrongPassword(password)) {
+    return res.status(400).json({ error: "Password must be at least 8 characters." });
+  }
+
+  try {
+    await ensureUsersStore();
+    const existing = findUserByEmail(email);
+    if (existing) {
+      return res.status(409).json({ error: "An account already exists for this email." });
+    }
+
+    const passwordRecord = createPasswordRecord(password);
+    const timestamp = nowIso();
+    const user = {
+      id: buildUserId(),
+      email,
+      name,
+      passwordSalt: passwordRecord.salt,
+      passwordHash: passwordRecord.hash,
+      profile: {},
+      profileUpdatedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    usersStore.users.push(user);
+    await persistUsersStore();
+
+    const token = createSession(user.id);
+    return res.status(201).json({
+      token,
+      user: sanitizePublicUser(user),
+      expiresInSec: Math.floor(AUTH_SESSION_TTL_MS / 1000),
+    });
+  } catch (error) {
+    console.error("auth-signup error", error);
+    return res.status(500).json({ error: "Unable to create account." });
+  }
+});
+
+app.post("/api/auth/signin", async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const password = String(req.body?.password || "");
+
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: "Use a valid email address." });
+  }
+  if (!password) {
+    return res.status(400).json({ error: "Password is required." });
+  }
+
+  try {
+    await ensureUsersStore();
+    const user = findUserByEmail(email);
+    if (!user || !verifyPassword(password, user.passwordSalt, user.passwordHash)) {
+      return res.status(401).json({ error: "Invalid email or password." });
+    }
+
+    user.updatedAt = nowIso();
+    await persistUsersStore();
+
+    const token = createSession(user.id);
+    return res.json({
+      token,
+      user: sanitizePublicUser(user),
+      expiresInSec: Math.floor(AUTH_SESSION_TTL_MS / 1000),
+    });
+  } catch (error) {
+    console.error("auth-signin error", error);
+    return res.status(500).json({ error: "Unable to sign in." });
+  }
+});
+
+app.get("/api/auth/me", requireAuth, (req, res) => {
+  return res.json({
+    user: sanitizePublicUser(req.auth.user),
+    expiresInSec: Math.floor(AUTH_SESSION_TTL_MS / 1000),
+  });
+});
+
+app.post("/api/auth/signout", requireAuth, (req, res) => {
+  clearSession(req.auth.token);
+  return res.json({ ok: true });
+});
+
+app.get("/api/profile", requireAuth, (req, res) => {
+  const profile =
+    req.auth.user.profile && typeof req.auth.user.profile === "object" && !Array.isArray(req.auth.user.profile)
+      ? req.auth.user.profile
+      : {};
+
+  return res.json({
+    data: profile,
+    meta: {
+      updatedAt: req.auth.user.profileUpdatedAt || req.auth.user.updatedAt || req.auth.user.createdAt || null,
+    },
+  });
+});
+
+app.put("/api/profile", requireAuth, async (req, res) => {
+  const incomingState =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? req.body.state ?? req.body
+      : null;
+  const state = sanitizeProfileState(incomingState);
+
+  if (!state) {
+    return res.status(400).json({ error: "Profile state must be a JSON object under 900KB." });
+  }
+
+  try {
+    req.auth.user.profile = state;
+    req.auth.user.profileUpdatedAt = nowIso();
+    req.auth.user.updatedAt = req.auth.user.profileUpdatedAt;
+    await persistUsersStore();
+    return res.json({
+      ok: true,
+      meta: {
+        updatedAt: req.auth.user.profileUpdatedAt,
+      },
+    });
+  } catch (error) {
+    console.error("profile-save error", error);
+    return res.status(500).json({ error: "Unable to save profile." });
+  }
+});
+
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
@@ -1515,6 +1826,10 @@ app.post("/api/ai/insight", async (req, res) => {
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Endpoint not found" });
+});
+
+ensureUsersStore().catch((error) => {
+  console.error("users-store bootstrap error", error);
 });
 
 app.listen(PORT, () => {

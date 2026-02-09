@@ -3,14 +3,21 @@ import { motion } from "framer-motion";
 import AdvancedChart from "./AdvancedChart";
 import {
   fetchBackendHealth,
+  fetchAuthSession,
   fetchAiInsight,
   fetchMarketNews,
   fetchMarketPulse,
   fetchQuoteMulti,
   fetchStockCandlesMulti,
+  fetchUserProfile,
   getApiConnectionState,
+  saveUserProfile,
   runBacktest,
   searchSymbols,
+  setApiAuthToken,
+  signIn,
+  signOut,
+  signUp,
 } from "./api/client";
 
 const DEFAULT_TICKERS = ["AAPL", "MSFT", "NVDA"];
@@ -80,6 +87,11 @@ const WORKSPACE_SHORT_LABEL = {
   intelligence: "Intel",
   portfolio: "Portfolio",
   strategy: "Strategy",
+};
+const AUTH_FORM_DEFAULT = {
+  name: "",
+  email: "",
+  password: "",
 };
 
 function usePersistentState(key, fallbackValue) {
@@ -296,6 +308,126 @@ function normalizeExecutionConfig(rawConfig) {
     maxPositionPct: Number(maxPositionPct.toFixed(2)),
     slippageBps: Number(slippageBps.toFixed(2)),
   };
+}
+
+function normalizeIndicatorConfig(rawConfig) {
+  const source = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  return {
+    sma20: source.sma20 !== false,
+    sma50: source.sma50 !== false,
+    support: source.support !== false,
+    resistance: source.resistance !== false,
+  };
+}
+
+function normalizeBacktestConfig(rawConfig) {
+  const source = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  const fallbackRange = BACKTEST_RANGE_OPTIONS.includes(source.range) ? source.range : "1Y";
+  const ticker = normalizeTicker(source.ticker) || DEFAULT_TICKERS[0];
+  const fastPeriod = clamp(Number(source.fastPeriod) || 20, 2, 200);
+  const slowPeriod = clamp(Number(source.slowPeriod) || 50, 3, 300);
+  const adjustedSlow = Math.max(slowPeriod, fastPeriod + 1);
+  const initialCapital = clamp(Number(source.initialCapital) || 10000, 1000, 100000000);
+  const feeBps = clamp(Number(source.feeBps) || 5, 0, 300);
+
+  return {
+    ticker,
+    range: fallbackRange,
+    fastPeriod: Math.round(fastPeriod),
+    slowPeriod: Math.round(adjustedSlow),
+    initialCapital: Math.round(initialCapital),
+    feeBps: Math.round(feeBps),
+  };
+}
+
+function normalizeCloudProfile(rawProfile) {
+  const source = rawProfile && typeof rawProfile === "object" && !Array.isArray(rawProfile) ? rawProfile : {};
+  const selectedTickers = Array.isArray(source.selectedTickers)
+    ? source.selectedTickers.map(normalizeTicker).filter(Boolean).slice(0, 8)
+    : [];
+  const safeTickers = selectedTickers.length ? selectedTickers : DEFAULT_TICKERS;
+  const validRange = RANGE_OPTIONS.includes(source.range) ? source.range : "3M";
+  const validMode = MODE_OPTIONS.some((option) => option.value === source.chartMode)
+    ? source.chartMode
+    : "candlestick";
+  const validWorkspace = WORKSPACE_ORDER.includes(source.activeWorkspace) ? source.activeWorkspace : "market";
+  const validScanner = SCANNER_PROFILE_OPTIONS.some((option) => option.value === source.scannerProfile)
+    ? source.scannerProfile
+    : "momentum";
+  const validAutoRefresh = AUTO_REFRESH_OPTIONS.some((option) => option.value === Number(source.autoRefreshSec))
+    ? Number(source.autoRefreshSec)
+    : 60;
+  const validRisk = RISK_OPTIONS.includes(source.riskProfile) ? source.riskProfile : "balanced";
+  const validStyle = STRATEGY_STYLE_OPTIONS.some((option) => option.value === source.strategyStyle)
+    ? source.strategyStyle
+    : "tactical";
+  const safePositions = Array.isArray(source.positions)
+    ? source.positions
+        .map((position) => ({
+          ticker: normalizeTicker(position?.ticker),
+          shares: Number(position?.shares) || 0,
+          avgCost: Number(position?.avgCost) || 0,
+        }))
+        .filter((position) => position.ticker && position.shares > 0 && position.avgCost > 0)
+        .slice(0, 100)
+    : [];
+  const safeAiHistory = Array.isArray(source.aiHistory)
+    ? source.aiHistory
+        .filter((entry) => entry && typeof entry === "object")
+        .slice(0, 8)
+    : [];
+  const safeScanReplay = Array.isArray(source.scanReplay)
+    ? source.scanReplay.filter((entry) => entry && typeof entry === "object").slice(0, 36)
+    : [];
+  const safeDismissedAlerts =
+    source.dismissedAlerts && typeof source.dismissedAlerts === "object" && !Array.isArray(source.dismissedAlerts)
+      ? source.dismissedAlerts
+      : {};
+  const theme = source.theme === "night" ? "night" : "day";
+  const focusTicker = normalizeTicker(source.focusTicker) || safeTickers[0];
+  const aiPrompt = typeof source.aiPrompt === "string" ? source.aiPrompt.slice(0, 5000) : "";
+
+  return {
+    version: 1,
+    theme,
+    activeWorkspace: validWorkspace,
+    focusMode: Boolean(source.focusMode),
+    selectedTickers: safeTickers,
+    range: validRange,
+    chartMode: validMode,
+    scannerProfile: validScanner,
+    autoRefreshSec: validAutoRefresh,
+    indicatorConfig: normalizeIndicatorConfig(source.indicatorConfig),
+    alertConfig: normalizeAlertConfig(source.alertConfig),
+    dismissedAlerts: safeDismissedAlerts,
+    scanReplay: safeScanReplay,
+    executionConfig: normalizeExecutionConfig(source.executionConfig),
+    positions: safePositions,
+    aiHistory: safeAiHistory,
+    backtestConfig: normalizeBacktestConfig(source.backtestConfig),
+    riskProfile: validRisk,
+    strategyStyle: validStyle,
+    focusTicker,
+    aiPrompt,
+  };
+}
+
+function cloudSyncStatusClass(status) {
+  if (status === "synced") return "status-positive";
+  if (status === "error") return "status-negative";
+  return "status-neutral";
+}
+
+function cloudSyncStatusLabel(status) {
+  if (status === "loading") return "loading";
+  if (status === "saving") return "saving";
+  if (status === "synced") return "synced";
+  if (status === "error") return "error";
+  return "idle";
+}
+
+function normalizeAuthMode(value) {
+  return value === "signup" ? "signup" : "signin";
 }
 
 function activityToneClass(kind) {
@@ -559,6 +691,22 @@ function BrandLogo() {
 }
 
 function App() {
+  const [authToken, setAuthToken] = usePersistentState("sv-auth-token", "");
+  const [authUser, setAuthUser] = useState(null);
+  const [authMode, setAuthMode] = useState("signin");
+  const [authForm, setAuthForm] = useState(AUTH_FORM_DEFAULT);
+  const [authError, setAuthError] = useState("");
+  const [authNotice, setAuthNotice] = useState("");
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [cloudSyncState, setCloudSyncState] = useState({
+    status: "idle",
+    detail: "Sign in to unlock cloud sync.",
+  });
+  const cloudStateSignatureRef = useRef("");
+  const cloudHydratedRef = useRef(false);
+  const cloudSaveInFlightRef = useRef(false);
+
   const [theme, setTheme] = usePersistentState("sv-theme", "day");
   const [activeWorkspace, setActiveWorkspace] = usePersistentState("sv-workspace-tab", "market");
   const [focusMode, setFocusMode] = usePersistentState("sv-focus-mode", false);
@@ -568,12 +716,7 @@ function App() {
   const [chartMode, setChartMode] = usePersistentState("sv-chart-mode", "candlestick");
   const [scannerProfile, setScannerProfile] = usePersistentState("sv-scanner-profile", "momentum");
   const [autoRefreshSec, setAutoRefreshSec] = usePersistentState("sv-auto-refresh", 60);
-  const [indicatorConfig, setIndicatorConfig] = usePersistentState("sv-indicators", {
-    sma20: true,
-    sma50: true,
-    support: true,
-    resistance: true,
-  });
+  const [indicatorConfig, setIndicatorConfig] = usePersistentState("sv-indicators", normalizeIndicatorConfig({}));
   const [alertConfig, setAlertConfig] = usePersistentState("sv-alert-config", normalizeAlertConfig({}));
   const [dismissedAlerts, setDismissedAlerts] = usePersistentState("sv-dismissed-alerts", {});
   const [scanReplay, setScanReplay] = usePersistentState("sv-scan-replay", []);
@@ -621,26 +764,331 @@ function App() {
   const [quoteSnapshot, setQuoteSnapshot] = useState({});
   const [scenarioMove, setScenarioMove] = useState(5);
 
-  const [riskProfile, setRiskProfile] = useState("balanced");
-  const [strategyStyle, setStrategyStyle] = useState("tactical");
+  const [riskProfile, setRiskProfile] = usePersistentState("sv-risk-profile", "balanced");
+  const [strategyStyle, setStrategyStyle] = usePersistentState("sv-strategy-style", "tactical");
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiInsight, setAiInsight] = useState(null);
   const [aiMeta, setAiMeta] = useState(null);
   const [aiError, setAiError] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiHistory, setAiHistory] = usePersistentState("sv-ai-history", []);
-  const [backtestConfig, setBacktestConfig] = usePersistentState("sv-backtest-config", {
-    ticker: DEFAULT_TICKERS[0],
-    range: "1Y",
-    fastPeriod: 20,
-    slowPeriod: 50,
-    initialCapital: 10000,
-    feeBps: 5,
-  });
+  const [backtestConfig, setBacktestConfig] = usePersistentState("sv-backtest-config", normalizeBacktestConfig({}));
   const [backtestResult, setBacktestResult] = useState(null);
   const [backtestMeta, setBacktestMeta] = useState(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestError, setBacktestError] = useState("");
+
+  useEffect(() => {
+    setApiAuthToken(authToken);
+  }, [authToken]);
+
+  const cloudProfileDraft = useMemo(
+    () =>
+      normalizeCloudProfile({
+        theme,
+        activeWorkspace,
+        focusMode,
+        selectedTickers,
+        range,
+        chartMode,
+        scannerProfile,
+        autoRefreshSec,
+        indicatorConfig,
+        alertConfig,
+        dismissedAlerts,
+        scanReplay,
+        executionConfig,
+        positions,
+        aiHistory,
+        backtestConfig,
+        riskProfile,
+        strategyStyle,
+        focusTicker,
+        aiPrompt,
+      }),
+    [
+      activeWorkspace,
+      aiHistory,
+      aiPrompt,
+      alertConfig,
+      autoRefreshSec,
+      backtestConfig,
+      chartMode,
+      dismissedAlerts,
+      executionConfig,
+      focusMode,
+      focusTicker,
+      indicatorConfig,
+      positions,
+      range,
+      riskProfile,
+      scanReplay,
+      scannerProfile,
+      selectedTickers,
+      strategyStyle,
+      theme,
+    ]
+  );
+  const cloudProfileSignature = useMemo(() => JSON.stringify(cloudProfileDraft), [cloudProfileDraft]);
+
+  const applyCloudProfile = useCallback(
+    (rawProfile) => {
+      const profile = normalizeCloudProfile(rawProfile);
+      setTheme(profile.theme);
+      setActiveWorkspace(profile.activeWorkspace);
+      setFocusMode(profile.focusMode);
+      setSelectedTickers(profile.selectedTickers);
+      setRange(profile.range);
+      setChartMode(profile.chartMode);
+      setScannerProfile(profile.scannerProfile);
+      setAutoRefreshSec(profile.autoRefreshSec);
+      setIndicatorConfig(profile.indicatorConfig);
+      setAlertConfig(profile.alertConfig);
+      setDismissedAlerts(profile.dismissedAlerts);
+      setScanReplay(profile.scanReplay);
+      setExecutionConfig(profile.executionConfig);
+      setPositions(profile.positions);
+      setAiHistory(profile.aiHistory);
+      setBacktestConfig(profile.backtestConfig);
+      setRiskProfile(profile.riskProfile);
+      setStrategyStyle(profile.strategyStyle);
+      setFocusTicker(profile.focusTicker);
+      setAiPrompt(profile.aiPrompt);
+      cloudStateSignatureRef.current = JSON.stringify(profile);
+      cloudHydratedRef.current = true;
+    },
+    [
+      setActiveWorkspace,
+      setAiHistory,
+      setAlertConfig,
+      setAutoRefreshSec,
+      setBacktestConfig,
+      setChartMode,
+      setDismissedAlerts,
+      setExecutionConfig,
+      setFocusTicker,
+      setFocusMode,
+      setIndicatorConfig,
+      setPositions,
+      setRange,
+      setRiskProfile,
+      setScanReplay,
+      setScannerProfile,
+      setSelectedTickers,
+      setStrategyStyle,
+      setAiPrompt,
+      setTheme,
+    ]
+  );
+
+  const hydrateCloudProfile = useCallback(async () => {
+    try {
+      const payload = await fetchUserProfile();
+      const rawProfile = payload?.data;
+      if (rawProfile && typeof rawProfile === "object" && !Array.isArray(rawProfile) && Object.keys(rawProfile).length) {
+        applyCloudProfile(rawProfile);
+        setCloudSyncState({
+          status: "synced",
+          detail: `Cloud profile restored at ${new Date().toLocaleTimeString()}`,
+        });
+      } else {
+        cloudHydratedRef.current = true;
+        cloudStateSignatureRef.current = "";
+        setCloudSyncState({
+          status: "idle",
+          detail: "No cloud profile yet. Local state will sync automatically.",
+        });
+      }
+    } catch (error) {
+      cloudHydratedRef.current = true;
+      setCloudSyncState({
+        status: "error",
+        detail: error.message || "Unable to load cloud profile.",
+      });
+    }
+  }, [applyCloudProfile]);
+
+  const syncCloudProfileNow = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!authUser || !cloudHydratedRef.current || cloudSaveInFlightRef.current) return false;
+      if (cloudProfileSignature === cloudStateSignatureRef.current) {
+        if (!silent) {
+          setCloudSyncState({
+            status: "synced",
+            detail: `Already synced at ${new Date().toLocaleTimeString()}`,
+          });
+        }
+        return true;
+      }
+
+      cloudSaveInFlightRef.current = true;
+      setCloudSyncState({
+        status: "saving",
+        detail: "Saving command center state...",
+      });
+
+      try {
+        await saveUserProfile(cloudProfileDraft);
+        cloudStateSignatureRef.current = cloudProfileSignature;
+        setCloudSyncState({
+          status: "synced",
+          detail: `Synced at ${new Date().toLocaleTimeString()}`,
+        });
+        return true;
+      } catch (error) {
+        setCloudSyncState({
+          status: "error",
+          detail: error.message || "Cloud sync failed.",
+        });
+        return false;
+      } finally {
+        cloudSaveInFlightRef.current = false;
+      }
+    },
+    [authUser, cloudProfileDraft, cloudProfileSignature]
+  );
+
+  const handleAuthSubmit = useCallback(
+    async (event) => {
+      event.preventDefault();
+      const mode = normalizeAuthMode(authMode);
+      const email = String(authForm.email || "").trim();
+      const password = String(authForm.password || "");
+      const name = String(authForm.name || "").trim();
+
+      if (!email || !password) {
+        setAuthError("Email and password are required.");
+        return;
+      }
+      if (mode === "signup" && password.length < 8) {
+        setAuthError("Password must be at least 8 characters.");
+        return;
+      }
+
+      setAuthSubmitting(true);
+      setAuthError("");
+      setAuthNotice("");
+      try {
+        const payload =
+          mode === "signup"
+            ? await signUp({ name, email, password })
+            : await signIn({ email, password });
+        const token = String(payload?.token || "");
+        const user = payload?.user || null;
+        if (!token || !user) {
+          throw new Error("Authentication response was incomplete.");
+        }
+        setAuthChecking(true);
+        setApiAuthToken(token);
+        setAuthToken(token);
+        setAuthUser(user);
+        cloudHydratedRef.current = false;
+        cloudStateSignatureRef.current = "";
+        setCloudSyncState({
+          status: "loading",
+          detail: "Loading cloud profile...",
+        });
+        setAuthNotice(mode === "signup" ? "Account created successfully." : "Signed in successfully.");
+        setAuthForm({
+          name: "",
+          email,
+          password: "",
+        });
+      } catch (error) {
+        setAuthError(error.message || "Authentication failed.");
+      } finally {
+        setAuthSubmitting(false);
+      }
+    },
+    [authForm.email, authForm.name, authForm.password, authMode, setAuthToken]
+  );
+
+  const handleSignOut = useCallback(async () => {
+    try {
+      await signOut();
+    } catch {
+      // ignore sign-out transport failures and clear local session regardless
+    }
+    setApiAuthToken("");
+    setAuthToken("");
+    setAuthUser(null);
+    setAuthMode("signin");
+    setAuthNotice("Session ended.");
+    setAuthError("");
+    setCommandPaletteOpen(false);
+    cloudHydratedRef.current = false;
+    cloudStateSignatureRef.current = "";
+    setCloudSyncState({
+      status: "idle",
+      detail: "Sign in to unlock cloud sync.",
+    });
+  }, [setAuthToken]);
+
+  useEffect(() => {
+    let canceled = false;
+
+    async function restoreSession() {
+      if (!authToken) {
+        setAuthUser(null);
+        setAuthChecking(false);
+        cloudHydratedRef.current = false;
+        cloudStateSignatureRef.current = "";
+        setCloudSyncState({
+          status: "idle",
+          detail: "Sign in to unlock cloud sync.",
+        });
+        return;
+      }
+
+      setAuthChecking(true);
+      setAuthError("");
+      setApiAuthToken(authToken);
+
+      try {
+        const session = await fetchAuthSession();
+        if (canceled) return;
+        if (!session?.user) {
+          throw new Error("Session is invalid.");
+        }
+        setAuthUser(session.user);
+        setCloudSyncState({
+          status: "loading",
+          detail: "Loading cloud profile...",
+        });
+        await hydrateCloudProfile();
+      } catch (error) {
+        if (canceled) return;
+        setApiAuthToken("");
+        setAuthToken("");
+        setAuthUser(null);
+        setAuthError(error.message || "Session expired. Please sign in again.");
+        setCloudSyncState({
+          status: "idle",
+          detail: "Sign in to unlock cloud sync.",
+        });
+        cloudHydratedRef.current = false;
+        cloudStateSignatureRef.current = "";
+      } finally {
+        if (!canceled) {
+          setAuthChecking(false);
+        }
+      }
+    }
+
+    restoreSession();
+    return () => {
+      canceled = true;
+    };
+  }, [authToken, hydrateCloudProfile, setAuthToken]);
+
+  useEffect(() => {
+    if (!authUser || !cloudHydratedRef.current) return undefined;
+    if (cloudProfileSignature === cloudStateSignatureRef.current) return undefined;
+    const timer = window.setTimeout(() => {
+      syncCloudProfileNow({ silent: true });
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [authUser, cloudProfileSignature, syncCloudProfileNow]);
 
   useEffect(() => {
     if (WORKSPACE_ORDER.includes(activeWorkspace)) return;
@@ -770,6 +1218,34 @@ function App() {
   }, [executionConfig, setExecutionConfig]);
 
   useEffect(() => {
+    const normalized = normalizeIndicatorConfig(indicatorConfig);
+    if (
+      !indicatorConfig ||
+      normalized.sma20 !== indicatorConfig.sma20 ||
+      normalized.sma50 !== indicatorConfig.sma50 ||
+      normalized.support !== indicatorConfig.support ||
+      normalized.resistance !== indicatorConfig.resistance
+    ) {
+      setIndicatorConfig(normalized);
+    }
+  }, [indicatorConfig, setIndicatorConfig]);
+
+  useEffect(() => {
+    const normalized = normalizeBacktestConfig(backtestConfig);
+    if (
+      !backtestConfig ||
+      normalized.ticker !== backtestConfig.ticker ||
+      normalized.range !== backtestConfig.range ||
+      normalized.fastPeriod !== backtestConfig.fastPeriod ||
+      normalized.slowPeriod !== backtestConfig.slowPeriod ||
+      normalized.initialCapital !== backtestConfig.initialCapital ||
+      normalized.feeBps !== backtestConfig.feeBps
+    ) {
+      setBacktestConfig(normalized);
+    }
+  }, [backtestConfig, setBacktestConfig]);
+
+  useEffect(() => {
     if (dismissedAlerts && typeof dismissedAlerts === "object" && !Array.isArray(dismissedAlerts)) return;
     setDismissedAlerts({});
   }, [dismissedAlerts, setDismissedAlerts]);
@@ -827,11 +1303,12 @@ function App() {
   }, [commandPaletteOpen, commandPaletteQuery]);
 
   useEffect(() => {
+    if (!authUser) return;
     if (lastWorkspaceRef.current === activeWorkspace) return;
     const workspaceLabel = WORKSPACE_INFO[activeWorkspace]?.label || activeWorkspace;
     recordActivity("workspace", `Switched to ${workspaceLabel}`, "Workspace context updated");
     lastWorkspaceRef.current = activeWorkspace;
-  }, [activeWorkspace, recordActivity]);
+  }, [activeWorkspace, authUser, recordActivity]);
 
   useEffect(() => {
     if (selectedTickers.length === 0) {
@@ -938,6 +1415,7 @@ function App() {
   );
 
   const runMarketScan = useCallback(async ({ source = "manual" } = {}) => {
+    if (!authUser) return;
     if (scanInFlightRef.current) return;
     if (!selectedTickers.length) {
       setDataError("Add at least one ticker to run a market scan.");
@@ -1043,9 +1521,10 @@ function App() {
       setLoadingData(false);
       scanInFlightRef.current = false;
     }
-  }, [range, recordActivity, scannerProfile, selectedTickers, setScanReplay, updateBackendStatus]);
+  }, [authUser, range, recordActivity, scannerProfile, selectedTickers, setScanReplay, updateBackendStatus]);
 
   const refreshPulse = useCallback(async ({ source = "manual" } = {}) => {
+    if (!authUser) return;
     setPulseLoading(true);
     setPulseError("");
     try {
@@ -1068,9 +1547,10 @@ function App() {
     } finally {
       setPulseLoading(false);
     }
-  }, [recordActivity]);
+  }, [authUser, recordActivity]);
 
   const refreshNews = useCallback(async ({ source = "manual" } = {}) => {
+    if (!authUser) return;
     setNewsLoading(true);
     setNewsError("");
     try {
@@ -1092,9 +1572,10 @@ function App() {
     } finally {
       setNewsLoading(false);
     }
-  }, [recordActivity, selectedTickers]);
+  }, [authUser, recordActivity, selectedTickers]);
 
   const refreshPortfolioQuotes = useCallback(async () => {
+    if (!authUser) return;
     const tickers = [...new Set(positions.map((position) => normalizeTicker(position.ticker)).filter(Boolean))];
     if (tickers.length === 0) {
       setQuoteSnapshot({});
@@ -1107,20 +1588,22 @@ function App() {
     } catch {
       setQuoteSnapshot((previous) => previous);
     }
-  }, [positions]);
+  }, [authUser, positions]);
 
   useEffect(() => {
+    if (!authUser || authChecking) return;
     runMarketScan({ source: "boot" });
     refreshPulse({ source: "boot" });
     refreshNews({ source: "boot" });
-  }, [runMarketScan, refreshPulse, refreshNews]);
+  }, [authChecking, authUser, runMarketScan, refreshPulse, refreshNews]);
 
   useEffect(() => {
+    if (!authUser || authChecking) return;
     refreshPortfolioQuotes();
-  }, [refreshPortfolioQuotes]);
+  }, [authChecking, authUser, refreshPortfolioQuotes]);
 
   useEffect(() => {
-    if (!autoRefreshSec) return undefined;
+    if (!authUser || authChecking || !autoRefreshSec) return undefined;
     const timer = window.setInterval(() => {
       runMarketScan({ source: "auto" });
       refreshPulse({ source: "auto" });
@@ -1128,9 +1611,13 @@ function App() {
       refreshPortfolioQuotes();
     }, Number(autoRefreshSec) * 1000);
     return () => window.clearInterval(timer);
-  }, [autoRefreshSec, refreshPortfolioQuotes, refreshPulse, refreshNews, runMarketScan]);
+  }, [authChecking, authUser, autoRefreshSec, refreshPortfolioQuotes, refreshPulse, refreshNews, runMarketScan]);
 
   useEffect(() => {
+    if (!authUser) {
+      setSuggestions([]);
+      return undefined;
+    }
     if (!searchText || searchText.trim().length < 2) {
       setSuggestions([]);
       return undefined;
@@ -1160,7 +1647,7 @@ function App() {
       isCancelled = true;
       window.clearTimeout(timer);
     };
-  }, [searchText]);
+  }, [authUser, searchText]);
 
   const dataByTicker = useMemo(() => {
     return Object.fromEntries(
@@ -1979,6 +2466,22 @@ function App() {
         },
       },
       {
+        id: "sync-cloud",
+        label: "Sync Cloud Profile",
+        description: "Save your state/settings to secure account storage.",
+        shortcut: "Cloud",
+        keywords: "cloud sync save profile state settings",
+        run: () => syncCloudProfileNow(),
+      },
+      {
+        id: "signout",
+        label: "Sign Out",
+        description: "End current session on this device.",
+        shortcut: "Session",
+        keywords: "logout account sign out",
+        run: () => handleSignOut(),
+      },
+      {
         id: "focus-search",
         label: "Focus Ticker Search",
         description: "Jump cursor into search bar for symbol lookup.",
@@ -2126,6 +2629,7 @@ function App() {
       draftOpportunityBrief,
       focusMode,
       generateAiBrief,
+      handleSignOut,
       refreshNews,
       refreshPulse,
       revealAlphaPanel,
@@ -2133,6 +2637,7 @@ function App() {
       runBacktestScenario,
       runMarketScan,
       setActiveWorkspace,
+      syncCloudProfileNow,
       stageExecutionPlanPosition,
       stageOpportunityBacktest,
       testBackendConnection,
@@ -2161,6 +2666,7 @@ function App() {
   );
 
   useEffect(() => {
+    if (!authUser || authChecking) return undefined;
     const onKeyDown = (event) => {
       const key = String(event.key || "").toLowerCase();
       const editable = isEditableTarget(event.target);
@@ -2264,6 +2770,8 @@ function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
+    authChecking,
+    authUser,
     closeCommandPalette,
     commandPaletteIndex,
     commandPaletteOpen,
@@ -2475,6 +2983,149 @@ function App() {
   const curveMin = curveValues.length ? Math.min(...curveValues) : 0;
   const curveMax = curveValues.length ? Math.max(...curveValues) : 0;
   const curveRange = Math.max(1, curveMax - curveMin);
+  const cloudSyncLabel = cloudSyncStatusLabel(cloudSyncState.status);
+  const cloudSyncClass = cloudSyncStatusClass(cloudSyncState.status);
+  const accountName = authUser?.name || authUser?.email || "Trader";
+
+  if (authChecking) {
+    return (
+      <div className="app-shell auth-shell">
+        <div className="ambient-backdrop" aria-hidden="true">
+          <span className="orb orb-a" />
+          <span className="orb orb-b" />
+          <span className="orb orb-c" />
+        </div>
+        <section className="glass-card auth-loading-card">
+          <BrandLogo />
+          <div>
+            <h1>StockVision X</h1>
+            <p>Restoring your account session and cloud profile...</p>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <div className="app-shell auth-shell">
+        <div className="ambient-backdrop" aria-hidden="true">
+          <span className="orb orb-a" />
+          <span className="orb orb-b" />
+          <span className="orb orb-c" />
+        </div>
+        <section className="auth-grid">
+          <div className="glass-card auth-story-card">
+            <div className="brand-wrap">
+              <BrandLogo />
+              <div>
+                <p className="brand-title">StockVision X</p>
+                <p className="brand-subtitle">AI Trading Command Center</p>
+              </div>
+            </div>
+            <h1>Sync your command deck across devices with secure cloud profiles.</h1>
+            <p>
+              Sign in to persist watchlists, scanner tuning, execution settings, portfolio lab state, and strategy
+              configurations in one account vault.
+            </p>
+            <div className="auth-feature-grid">
+              <div>
+                <span>Cloud State Sync</span>
+                <p>Automatically saves settings and workspace context.</p>
+              </div>
+              <div>
+                <span>Secure Sessions</span>
+                <p>Token-based authentication with explicit sign-out controls.</p>
+              </div>
+              <div>
+                <span>Persistent Intelligence</span>
+                <p>Keep your setup history and portfolio operations ready.</p>
+              </div>
+            </div>
+          </div>
+
+          <form className="glass-card auth-card" onSubmit={handleAuthSubmit}>
+            <div className="auth-head">
+              <h2>{authMode === "signup" ? "Create Account" : "Sign In"}</h2>
+              <p>{authMode === "signup" ? "Start syncing your full app state." : "Continue from your last cloud session."}</p>
+            </div>
+            <div className="auth-mode-toggle">
+              <button
+                type="button"
+                className={`segment-button ${authMode === "signin" ? "active" : ""}`}
+                onClick={() => {
+                  setAuthMode("signin");
+                  setAuthError("");
+                  setAuthNotice("");
+                }}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                className={`segment-button ${authMode === "signup" ? "active" : ""}`}
+                onClick={() => {
+                  setAuthMode("signup");
+                  setAuthError("");
+                  setAuthNotice("");
+                }}
+              >
+                Sign Up
+              </button>
+            </div>
+
+            {authMode === "signup" ? (
+              <label>
+                Name
+                <input
+                  type="text"
+                  value={authForm.name}
+                  onChange={(event) => setAuthForm((previous) => ({ ...previous, name: event.target.value }))}
+                  placeholder="Your name"
+                  autoComplete="name"
+                />
+              </label>
+            ) : null}
+            <label>
+              Email
+              <input
+                type="email"
+                value={authForm.email}
+                onChange={(event) => setAuthForm((previous) => ({ ...previous, email: event.target.value }))}
+                placeholder="you@example.com"
+                autoComplete="email"
+              />
+            </label>
+            <label>
+              Password
+              <input
+                type="password"
+                value={authForm.password}
+                onChange={(event) => setAuthForm((previous) => ({ ...previous, password: event.target.value }))}
+                placeholder="At least 8 characters"
+                autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+              />
+            </label>
+            <button type="submit" className="primary-action auth-submit" disabled={authSubmitting}>
+              {authSubmitting
+                ? authMode === "signup"
+                  ? "Creating Account..."
+                  : "Signing In..."
+                : authMode === "signup"
+                ? "Create Account"
+                : "Sign In"}
+            </button>
+
+            {authError ? <p className="error-text auth-error">{authError}</p> : null}
+            {authNotice && !authError ? <p className="scan-note auth-note">{authNotice}</p> : null}
+            <p className="hint-text auth-footnote">
+              Cloud sync is enabled immediately after authentication. You can manually sync or sign out anytime from the top bar.
+            </p>
+          </form>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell" data-workspace={activeWorkspace} data-focus={focusMode ? "on" : "off"}>
@@ -2518,6 +3169,24 @@ function App() {
               Alerts {alertConfig.enabled ? sentinelCounts.total : "off"}
             </span>
             <span className="status-chip status-neutral">Mission {missionProgress}%</span>
+            <span className={`status-chip ${cloudSyncClass}`}>Cloud {cloudSyncLabel}</span>
+          </div>
+          <div className="account-pill">
+            <div>
+              <strong>{accountName}</strong>
+              <small>{cloudSyncState.detail}</small>
+            </div>
+            <button
+              type="button"
+              className="ghost-action"
+              onClick={() => syncCloudProfileNow()}
+              disabled={cloudSyncState.status === "saving"}
+            >
+              {cloudSyncState.status === "saving" ? "Syncing..." : "Sync"}
+            </button>
+            <button type="button" className="ghost-action" onClick={handleSignOut}>
+              Sign Out
+            </button>
           </div>
           <button type="button" className="command-launch" onClick={openCommandPalette}>
             <span>Command Menu</span>
@@ -2568,6 +3237,10 @@ function App() {
           <div>
             <span>{replayHistory.length}</span>
             <p>Replay Snapshots</p>
+          </div>
+          <div>
+            <span>{cloudSyncLabel}</span>
+            <p>Cloud Sync</p>
           </div>
         </div>
       </motion.section>
@@ -2835,6 +3508,10 @@ function App() {
             <div>
               <span>Last Scan</span>
               <strong>{lastRefresh ? lastRefresh.toLocaleTimeString() : "--:--"}</strong>
+            </div>
+            <div>
+              <span>Cloud Sync</span>
+              <strong>{cloudSyncLabel}</strong>
             </div>
           </div>
 

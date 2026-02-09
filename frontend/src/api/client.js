@@ -1,6 +1,7 @@
 const ENV_BASE = (import.meta.env.VITE_BACKEND_URL || "").trim().replace(/\/$/, "");
 const LOCAL_FALLBACKS = ["http://127.0.0.1:4000", "http://localhost:4000"];
 let activeBase = ENV_BASE || null;
+let authToken = "";
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
@@ -30,11 +31,17 @@ function buildUrl(base, path, params = {}) {
 }
 
 function makeOptions(options = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+  };
+
+  if (authToken && !headers.Authorization && !headers.authorization) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+
   return {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
+    headers,
     ...options,
   };
 }
@@ -123,6 +130,10 @@ export function getApiConnectionState() {
   };
 }
 
+export function setApiAuthToken(token) {
+  authToken = String(token || "").trim();
+}
+
 export async function fetchBackendHealth() {
   return request("/api/health");
 }
@@ -184,5 +195,41 @@ export async function fetchAiInsight(payload) {
   return request("/api/ai/insight", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function signUp({ name, email, password }) {
+  return request("/api/auth/signup", {
+    method: "POST",
+    body: JSON.stringify({ name, email, password }),
+  });
+}
+
+export async function signIn({ email, password }) {
+  return request("/api/auth/signin", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function signOut() {
+  return request("/api/auth/signout", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function fetchAuthSession() {
+  return request("/api/auth/me");
+}
+
+export async function fetchUserProfile() {
+  return request("/api/profile");
+}
+
+export async function saveUserProfile(state) {
+  return request("/api/profile", {
+    method: "PUT",
+    body: JSON.stringify({ state }),
   });
 }

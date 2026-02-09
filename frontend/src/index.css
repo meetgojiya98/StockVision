@@ -216,6 +216,8 @@ body::after {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .topbar-meta {
@@ -224,6 +226,38 @@ body::after {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.account-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 8px 9px;
+}
+
+.account-pill > div {
+  min-width: 160px;
+}
+
+.account-pill strong {
+  display: block;
+  font-size: 0.81rem;
+  font-family: "Sora", sans-serif;
+}
+
+.account-pill small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+}
+
+.account-pill .ghost-action {
+  padding: 6px 10px;
+  font-size: 0.73rem;
 }
 
 .status-chip {
@@ -317,6 +351,135 @@ body::after {
     radial-gradient(120% 120% at 12% -10%, rgba(118, 174, 255, 0.34), transparent 52%),
     linear-gradient(140deg, rgba(69, 133, 255, 0.23), rgba(31, 214, 167, 0.2));
   border: 1px solid rgba(109, 158, 245, 0.28);
+}
+
+.auth-shell {
+  min-height: calc(100vh - 32px);
+}
+
+.auth-grid {
+  margin-top: 24px;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1.2fr 0.85fr;
+}
+
+.auth-story-card,
+.auth-card {
+  padding: 22px;
+}
+
+.auth-story-card h1 {
+  margin: 18px 0 0;
+  font-family: "Sora", sans-serif;
+  font-size: clamp(1.4rem, 2vw, 2.2rem);
+  line-height: 1.15;
+}
+
+.auth-story-card > p {
+  margin: 10px 0 0;
+  color: var(--text-soft);
+  max-width: 56ch;
+}
+
+.auth-feature-grid {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.auth-feature-grid > div {
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 10px 11px;
+}
+
+.auth-feature-grid span {
+  font-weight: 700;
+  font-size: 0.84rem;
+}
+
+.auth-feature-grid p {
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: 0.8rem;
+}
+
+.auth-head h2 {
+  margin: 0;
+  font-family: "Sora", sans-serif;
+  font-size: 1.2rem;
+}
+
+.auth-head p {
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: 0.85rem;
+}
+
+.auth-mode-toggle {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.auth-card label {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+  font-size: 0.79rem;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.auth-card input {
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+  padding: 10px 11px;
+  font-size: 0.92rem;
+}
+
+.auth-submit {
+  margin-top: 12px;
+  width: 100%;
+}
+
+.auth-error {
+  margin-top: 10px;
+}
+
+.auth-note {
+  margin-top: 10px;
+}
+
+.auth-footnote {
+  margin-top: 10px;
+}
+
+.auth-loading-card {
+  margin: min(16vh, 140px) auto 0;
+  width: min(620px, 100%);
+  padding: 22px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.auth-loading-card h1 {
+  margin: 0;
+  font-family: "Sora", sans-serif;
+  font-size: 1.2rem;
+}
+
+.auth-loading-card p {
+  margin: 6px 0 0;
+  color: var(--text-soft);
+  font-size: 0.86rem;
 }
 
 .hero-panel::after {
@@ -1089,7 +1252,7 @@ body::after {
   margin-top: 10px;
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .deck-health-grid > div {
@@ -2909,6 +3072,10 @@ kbd {
     grid-template-columns: 1fr;
   }
 
+  .auth-grid {
+    grid-template-columns: 1fr;
+  }
+
   .workspace-tablist {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2946,6 +3113,16 @@ kbd {
     width: 100%;
     justify-content: space-between;
     flex-wrap: wrap;
+  }
+
+  .account-pill {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .account-pill > div {
+    min-width: 0;
+    flex: 1;
   }
 
   .topbar-meta {
@@ -2998,6 +3175,7 @@ kbd {
   .control-row,
   .control-row-2,
   .control-row-3,
+  .auth-mode-toggle,
   .command-intel-grid,
   .activity-stats,
   .replay-stats,
