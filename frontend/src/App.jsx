@@ -242,6 +242,48 @@ function formatTimeOnly(value) {
   });
 }
 
+function formatRelativeTime(value) {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
+  const diffMs = Date.now() - date.getTime();
+  const seconds = Math.round(diffMs / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+function alertSeverityRank(level) {
+  if (level === "high") return 3;
+  if (level === "medium") return 2;
+  return 1;
+}
+
+function alertSeverityClass(level) {
+  if (level === "high") return "alert-high";
+  if (level === "medium") return "alert-medium";
+  return "alert-low";
+}
+
+function normalizeAlertConfig(rawConfig) {
+  const source = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  const rsiHigh = clamp(Number(source.rsiHigh) || 70, 55, 95);
+  const rsiLow = Math.min(clamp(Number(source.rsiLow) || 30, 5, 45), rsiHigh - 5);
+  const volatilityHigh = clamp(Number(source.volatilityHigh) || 45, 10, 120);
+  const levelBufferPct = clamp(Number(source.levelBufferPct) || 2.5, 0.2, 10);
+  return {
+    enabled: source.enabled !== false,
+    rsiHigh: Number(rsiHigh.toFixed(1)),
+    rsiLow: Number(rsiLow.toFixed(1)),
+    volatilityHigh: Number(volatilityHigh.toFixed(1)),
+    levelBufferPct: Number(levelBufferPct.toFixed(1)),
+  };
+}
+
 function activityToneClass(kind) {
   if (kind === "error") return "activity-error";
   if (kind === "success") return "activity-success";
@@ -518,6 +560,9 @@ function App() {
     support: true,
     resistance: true,
   });
+  const [alertConfig, setAlertConfig] = usePersistentState("sv-alert-config", normalizeAlertConfig({}));
+  const [dismissedAlerts, setDismissedAlerts] = usePersistentState("sv-dismissed-alerts", {});
+  const [scanReplay, setScanReplay] = usePersistentState("sv-scan-replay", []);
 
   const [searchText, setSearchText] = useState("");
   const [suggestions, setSuggestions] = useState([]);
@@ -529,7 +574,10 @@ function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
   const [commandPaletteIndex, setCommandPaletteIndex] = useState(0);
+  const [selectedReplayId, setSelectedReplayId] = useState(null);
   const lastWorkspaceRef = useRef(activeWorkspace);
+  const sentinelPanelRef = useRef(null);
+  const seenAlertIdsRef = useRef(new Set());
 
   const [marketData, setMarketData] = useState({});
   const [marketMeta, setMarketMeta] = useState(null);
@@ -618,6 +666,73 @@ function App() {
   const toggleFocusMode = useCallback(() => {
     setFocusMode((previous) => !previous);
   }, [setFocusMode]);
+
+  const toggleAlertEngine = useCallback(() => {
+    setAlertConfig((previous) => normalizeAlertConfig({ ...previous, enabled: !previous?.enabled }));
+  }, [setAlertConfig]);
+
+  const updateAlertThreshold = useCallback(
+    (key, rawValue) => {
+      const numeric = Number(rawValue);
+      if (!Number.isFinite(numeric)) return;
+      setAlertConfig((previous) => normalizeAlertConfig({ ...previous, [key]: numeric }));
+    },
+    [setAlertConfig]
+  );
+
+  const dismissSentinelAlert = useCallback(
+    (alertId) => {
+      if (!alertId) return;
+      setDismissedAlerts((previous) => ({
+        ...(previous && typeof previous === "object" ? previous : {}),
+        [alertId]: new Date().toISOString(),
+      }));
+    },
+    [setDismissedAlerts]
+  );
+
+  const clearDismissedAlerts = useCallback(() => {
+    setDismissedAlerts({});
+    seenAlertIdsRef.current = new Set();
+    recordActivity("neutral", "Sentinel dismissals reset", "Hidden alerts restored to active queue");
+  }, [recordActivity, setDismissedAlerts]);
+
+  const clearScanReplay = useCallback(() => {
+    setScanReplay([]);
+    setSelectedReplayId(null);
+    recordActivity("neutral", "Scan replay cleared", "Timeline snapshots removed");
+  }, [recordActivity, setScanReplay]);
+
+  const revealSentinelPanel = useCallback(() => {
+    setActiveWorkspace("market");
+    if (sentinelPanelRef.current) {
+      sentinelPanelRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [setActiveWorkspace]);
+
+  useEffect(() => {
+    const normalized = normalizeAlertConfig(alertConfig);
+    if (
+      !alertConfig ||
+      normalized.enabled !== alertConfig.enabled ||
+      normalized.rsiHigh !== alertConfig.rsiHigh ||
+      normalized.rsiLow !== alertConfig.rsiLow ||
+      normalized.volatilityHigh !== alertConfig.volatilityHigh ||
+      normalized.levelBufferPct !== alertConfig.levelBufferPct
+    ) {
+      setAlertConfig(normalized);
+    }
+  }, [alertConfig, setAlertConfig]);
+
+  useEffect(() => {
+    if (dismissedAlerts && typeof dismissedAlerts === "object" && !Array.isArray(dismissedAlerts)) return;
+    setDismissedAlerts({});
+  }, [dismissedAlerts, setDismissedAlerts]);
+
+  useEffect(() => {
+    if (Array.isArray(scanReplay)) return;
+    setScanReplay([]);
+  }, [scanReplay, setScanReplay]);
 
   useEffect(() => {
     if (!Array.isArray(selectedTickers)) {
@@ -808,6 +923,36 @@ function App() {
       setMarketData(normalized.data || {});
       setMarketMeta(normalized.meta || null);
       setLastRefresh(new Date());
+
+      const snapshotRows = availableEntries
+        .map(([ticker, payload]) => {
+          const metrics = payload?.metrics || {};
+          const profileScore = scoreByProfile(metrics, scannerProfile);
+          return {
+            ticker,
+            profileScore,
+            signalScore: Number(metrics.signalScore || 0),
+            changePct: Number(metrics.changePct || 0),
+            trend: metrics.trend || "Neutral",
+            momentum: metrics.momentum || "Neutral",
+          };
+        })
+        .sort((left, right) => right.profileScore - left.profileScore);
+      const snapshot = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        createdAt: new Date().toISOString(),
+        range,
+        profile: scannerProfile,
+        requested: selectedTickers.length,
+        available: availableEntries.length,
+        avgScore: average(snapshotRows.map((row) => row.profileScore)),
+        leaderTicker: snapshotRows[0]?.ticker || "",
+        leaderScore: snapshotRows[0]?.profileScore || 0,
+        rows: snapshotRows.slice(0, 8),
+      };
+      setScanReplay((previous) => [snapshot, ...(Array.isArray(previous) ? previous : [])].slice(0, 36));
+      setSelectedReplayId(snapshot.id);
+
       updateBackendStatus({
         providerHint: response?.meta?.provider || "unknown",
         status: "online",
@@ -853,7 +998,7 @@ function App() {
       setLoadingData(false);
       scanInFlightRef.current = false;
     }
-  }, [range, recordActivity, selectedTickers, updateBackendStatus]);
+  }, [range, recordActivity, scannerProfile, selectedTickers, setScanReplay, updateBackendStatus]);
 
   const refreshPulse = useCallback(async ({ source = "manual" } = {}) => {
     setPulseLoading(true);
@@ -1063,6 +1208,163 @@ function App() {
       method: projection.method || "model",
     };
   }, [aiInsight]);
+  const replayHistory = useMemo(() => {
+    if (!Array.isArray(scanReplay)) return [];
+    return scanReplay
+      .filter((snapshot) => snapshot && typeof snapshot === "object" && Array.isArray(snapshot.rows))
+      .slice(0, 36);
+  }, [scanReplay]);
+  const replaySelection = useMemo(() => {
+    if (!replayHistory.length) return null;
+    return replayHistory.find((snapshot) => snapshot.id === selectedReplayId) || replayHistory[0];
+  }, [replayHistory, selectedReplayId]);
+  const replaySeries = useMemo(() => replayHistory.slice(0, 24).reverse(), [replayHistory]);
+  const replayScoreDelta = useMemo(() => {
+    if (replayHistory.length < 2) return 0;
+    return Number(replayHistory[0].avgScore || 0) - Number(replayHistory[1].avgScore || 0);
+  }, [replayHistory]);
+
+  const sentinelAlerts = useMemo(() => {
+    if (!alertConfig.enabled) return [];
+    const alertRows = [];
+    const alertTime = lastRefresh ? new Date(lastRefresh).toISOString() : new Date().toISOString();
+    const dismissedMap = dismissedAlerts && typeof dismissedAlerts === "object" ? dismissedAlerts : {};
+
+    rankedSignals.forEach((row) => {
+      const metrics = row.metrics || {};
+      const score = Number(row.profileScore || metrics.signalScore || 0);
+      const rsi14 = Number(metrics.rsi14 || 0);
+      const volatility = Number(metrics.volatility || 0);
+      const distToResistance = Number(metrics.distanceToResistancePct ?? 999);
+      const distToSupport = Number(metrics.distanceToSupportPct ?? 999);
+      const trend = metrics.trend || "Neutral";
+
+      if (rsi14 >= alertConfig.rsiHigh) {
+        alertRows.push({
+          id: `${row.ticker}-rsi-high`,
+          ticker: row.ticker,
+          severity: "medium",
+          score,
+          at: alertTime,
+          title: "RSI overheated",
+          detail: `RSI ${rsi14.toFixed(1)} above threshold ${alertConfig.rsiHigh.toFixed(1)}.`,
+        });
+      }
+      if (rsi14 <= alertConfig.rsiLow) {
+        alertRows.push({
+          id: `${row.ticker}-rsi-low`,
+          ticker: row.ticker,
+          severity: "medium",
+          score,
+          at: alertTime,
+          title: "RSI compressed",
+          detail: `RSI ${rsi14.toFixed(1)} below threshold ${alertConfig.rsiLow.toFixed(1)}.`,
+        });
+      }
+      if (volatility >= alertConfig.volatilityHigh) {
+        alertRows.push({
+          id: `${row.ticker}-volatility-high`,
+          ticker: row.ticker,
+          severity: volatility >= alertConfig.volatilityHigh * 1.3 ? "high" : "medium",
+          score,
+          at: alertTime,
+          title: "Volatility spike",
+          detail: `Annualized volatility ${volatility.toFixed(2)}% exceeds ${alertConfig.volatilityHigh.toFixed(1)}%.`,
+        });
+      }
+      if (distToResistance <= alertConfig.levelBufferPct && trend === "Bullish") {
+        alertRows.push({
+          id: `${row.ticker}-resistance-test`,
+          ticker: row.ticker,
+          severity: "low",
+          score,
+          at: alertTime,
+          title: "Breakout pressure",
+          detail: `Price is ${distToResistance.toFixed(2)}% from resistance.`,
+        });
+      }
+      if (distToSupport <= alertConfig.levelBufferPct && trend === "Bearish") {
+        alertRows.push({
+          id: `${row.ticker}-support-failure`,
+          ticker: row.ticker,
+          severity: "high",
+          score,
+          at: alertTime,
+          title: "Support pressure",
+          detail: `Price is ${distToSupport.toFixed(2)}% from support while trend is bearish.`,
+        });
+      }
+      if (score <= 35 && trend === "Bearish") {
+        alertRows.push({
+          id: `${row.ticker}-weak-score`,
+          ticker: row.ticker,
+          severity: "high",
+          score,
+          at: alertTime,
+          title: "Weak composite setup",
+          detail: `Profile score ${score.toFixed(0)} with bearish trend alignment.`,
+        });
+      }
+    });
+
+    return alertRows
+      .filter((alert) => !dismissedMap[alert.id])
+      .sort((left, right) => {
+        const severityDiff = alertSeverityRank(right.severity) - alertSeverityRank(left.severity);
+        if (severityDiff !== 0) return severityDiff;
+        return right.score - left.score;
+      })
+      .slice(0, 18);
+  }, [alertConfig, dismissedAlerts, lastRefresh, rankedSignals]);
+
+  const sentinelCounts = useMemo(() => {
+    return sentinelAlerts.reduce(
+      (summary, alert) => {
+        summary.total += 1;
+        if (alert.severity === "high") summary.high += 1;
+        else if (alert.severity === "medium") summary.medium += 1;
+        else summary.low += 1;
+        return summary;
+      },
+      { total: 0, high: 0, medium: 0, low: 0 }
+    );
+  }, [sentinelAlerts]);
+
+  const sentinelStatus = useMemo(() => {
+    if (!alertConfig.enabled) return { label: "Disabled", chipClass: "status-neutral" };
+    if (sentinelCounts.high > 0) return { label: "Critical", chipClass: "status-negative" };
+    if (sentinelCounts.medium > 0) return { label: "Watch", chipClass: "status-neutral" };
+    if (sentinelCounts.low > 0) return { label: "Stable", chipClass: "status-positive" };
+    return { label: "No Alerts", chipClass: "status-positive" };
+  }, [alertConfig.enabled, sentinelCounts.high, sentinelCounts.low, sentinelCounts.medium]);
+
+  useEffect(() => {
+    if (!replayHistory.length) {
+      if (selectedReplayId !== null) setSelectedReplayId(null);
+      return;
+    }
+    if (!replayHistory.some((snapshot) => snapshot.id === selectedReplayId)) {
+      setSelectedReplayId(replayHistory[0].id);
+    }
+  }, [replayHistory, selectedReplayId]);
+
+  useEffect(() => {
+    if (!alertConfig.enabled || sentinelAlerts.length === 0) return;
+    const seenIds = seenAlertIdsRef.current;
+    const freshCritical = sentinelAlerts.filter((alert) => alert.severity === "high" && !seenIds.has(alert.id));
+    if (!freshCritical.length) return;
+    const topAlert = freshCritical[0];
+    recordActivity("error", `Sentinel alert: ${topAlert.ticker}`, topAlert.title);
+    freshCritical.forEach((alert) => seenIds.add(alert.id));
+  }, [alertConfig.enabled, recordActivity, sentinelAlerts]);
+
+  const selectReplaySnapshot = useCallback((snapshot) => {
+    if (!snapshot) return;
+    setSelectedReplayId(snapshot.id);
+    if (snapshot.leaderTicker) {
+      setFocusTicker(snapshot.leaderTicker);
+    }
+  }, []);
   const workspaceTabs = useMemo(
     () => [
       {
@@ -1406,6 +1708,44 @@ function App() {
         run: () => clearActivityFeed(),
       },
       {
+        id: "toggle-alerts",
+        label: alertConfig.enabled ? "Disable Signal Sentinel" : "Enable Signal Sentinel",
+        description: "Toggle RSI/volatility alert engine.",
+        shortcut: "Alert",
+        keywords: "sentinel alert rsi volatility",
+        run: () => {
+          setActiveWorkspace("market");
+          toggleAlertEngine();
+        },
+      },
+      {
+        id: "reset-alerts",
+        label: "Reset Alert Dismissals",
+        description: "Restore dismissed alerts back into the queue.",
+        shortcut: "Reset",
+        keywords: "sentinel dismiss clear reset",
+        run: () => {
+          setActiveWorkspace("market");
+          clearDismissedAlerts();
+        },
+      },
+      {
+        id: "jump-sentinel",
+        label: "Jump To Signal Sentinel",
+        description: "Scroll to the live alert stack in Market Command.",
+        shortcut: "Watch",
+        keywords: "sentinel panel jump market",
+        run: () => revealSentinelPanel(),
+      },
+      {
+        id: "clear-replay",
+        label: "Clear Scan Replay Timeline",
+        description: "Remove replay snapshots and start fresh.",
+        shortcut: "Replay",
+        keywords: "scan replay history clear",
+        run: () => clearScanReplay(),
+      },
+      {
         id: "tab-market",
         label: "Switch Workspace: Market",
         description: "Scanner, pulse, chart arena, and signal matrix.",
@@ -1439,15 +1779,20 @@ function App() {
       },
     ],
     [
+      alertConfig.enabled,
+      clearDismissedAlerts,
+      clearScanReplay,
       clearActivityFeed,
       focusMode,
       generateAiBrief,
       refreshNews,
       refreshPulse,
+      revealSentinelPanel,
       runBacktestScenario,
       runMarketScan,
       setActiveWorkspace,
       testBackendConnection,
+      toggleAlertEngine,
       toggleFocusMode,
     ]
   );
@@ -1753,6 +2098,9 @@ function App() {
             <span className="status-chip status-neutral">
               Auto {autoRefreshSec ? `${autoRefreshSec}s` : "manual"}
             </span>
+            <span className={`status-chip ${sentinelStatus.chipClass}`}>
+              Alerts {alertConfig.enabled ? sentinelCounts.total : "off"}
+            </span>
             <span className="status-chip status-neutral">Mission {missionProgress}%</span>
           </div>
           <button type="button" className="command-launch" onClick={openCommandPalette}>
@@ -1801,6 +2149,10 @@ function App() {
             <span>{autoRefreshSec ? `${autoRefreshSec}s` : "Manual"}</span>
             <p>Refresh Cadence</p>
           </div>
+          <div>
+            <span>{replayHistory.length}</span>
+            <p>Replay Snapshots</p>
+          </div>
         </div>
       </motion.section>
 
@@ -1831,7 +2183,9 @@ function App() {
           <div className="ops-metric">
             <p>AI Engine</p>
             <h3>{aiEngineDisplay}</h3>
-            <small>Volatility map: {formatPercent(averageVolatility)}</small>
+            <small>
+              Volatility map: {formatPercent(averageVolatility)} · Sentinel {sentinelStatus.label}
+            </small>
           </div>
         </div>
         <div className="ops-actions">
@@ -1948,6 +2302,90 @@ function App() {
               <p className="hint-text">No activity yet. Run a scan or open the command menu to begin.</p>
             )}
           </div>
+        </div>
+
+        <div className="glass-card replay-panel">
+          <div className="section-head inline">
+            <div>
+              <h2>Scan Replay</h2>
+              <p>Timeline snapshots to inspect setup rotation and score drift.</p>
+            </div>
+            <button type="button" className="ghost-action" onClick={clearScanReplay} disabled={!replayHistory.length}>
+              Clear Replay
+            </button>
+          </div>
+          <div className="replay-stats">
+            <div>
+              <span>Snapshots</span>
+              <strong>{replayHistory.length}</strong>
+            </div>
+            <div>
+              <span>Score Drift</span>
+              <strong className={toneClass(replayScoreDelta)}>
+                {replayHistory.length > 1 ? formatPercent(replayScoreDelta) : "--"}
+              </strong>
+            </div>
+            <div>
+              <span>Lead Symbol</span>
+              <strong>{replayHistory[0]?.leaderTicker || "--"}</strong>
+            </div>
+            <div>
+              <span>Last Capture</span>
+              <strong>{replayHistory[0]?.createdAt ? formatTimeOnly(replayHistory[0].createdAt) : "--:--"}</strong>
+            </div>
+          </div>
+          <div className="replay-strip">
+            {replaySeries.map((snapshot) => {
+              const snapshotScore = clamp(Number(snapshot.avgScore || 0), 0, 100);
+              return (
+                <button
+                  key={snapshot.id}
+                  type="button"
+                  className={`replay-bar ${snapshot.id === replaySelection?.id ? "active" : ""}`}
+                  onClick={() => selectReplaySnapshot(snapshot)}
+                  title={`${snapshot.leaderTicker || "N/A"} · ${snapshotScore.toFixed(1)} · ${formatDateTime(snapshot.createdAt)}`}
+                >
+                  <span style={{ height: `${Math.round(12 + (snapshotScore / 100) * 56)}px` }} />
+                </button>
+              );
+            })}
+            {!replaySeries.length && <p className="hint-text">Run Market Scan to start timeline capture.</p>}
+          </div>
+          {replaySelection ? (
+            <div className="replay-selection">
+              <div className="replay-selection-head">
+                <div>
+                  <h4>{formatTimeOnly(replaySelection.createdAt)}</h4>
+                  <p>
+                    {formatRelativeTime(replaySelection.createdAt)} · {replaySelection.profile || "custom"} profile ·{" "}
+                    {replaySelection.range || "custom"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="ghost-action"
+                  onClick={() => replaySelection.leaderTicker && setFocusTicker(replaySelection.leaderTicker)}
+                  disabled={!replaySelection.leaderTicker}
+                >
+                  Focus Leader
+                </button>
+              </div>
+              <div className="replay-selection-list">
+                {replaySelection.rows.slice(0, 4).map((row) => (
+                  <button
+                    key={`${replaySelection.id}-${row.ticker}`}
+                    type="button"
+                    className="replay-row"
+                    onClick={() => setFocusTicker(row.ticker)}
+                  >
+                    <strong>{row.ticker}</strong>
+                    <span>{Number(row.profileScore || row.signalScore || 0).toFixed(0)}</span>
+                    <em className={toneClass(row.changePct)}>{formatPercent(row.changePct)}</em>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -2070,6 +2508,119 @@ function App() {
                     {item.label}
                   </button>
                 ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="deck-depth-grid">
+            <div className="deck-depth-card">
+              <div className="deck-depth-head">
+                <h3>Signal Sentinel</h3>
+                <span className={`status-chip ${sentinelStatus.chipClass}`}>{sentinelStatus.label}</span>
+              </div>
+              <p>Auto-detect RSI extremes, volatility spikes, and level pressure across ranked symbols.</p>
+              <div className="deck-depth-actions">
+                <button type="button" className="ghost-action" onClick={toggleAlertEngine}>
+                  {alertConfig.enabled ? "Disable Alerts" : "Enable Alerts"}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-action"
+                  onClick={clearDismissedAlerts}
+                  disabled={!Object.keys(dismissedAlerts || {}).length}
+                >
+                  Reset Dismissed
+                </button>
+              </div>
+              <div className="threshold-grid">
+                <label>
+                  RSI High
+                  <input
+                    type="number"
+                    min="55"
+                    max="95"
+                    value={alertConfig.rsiHigh}
+                    onChange={(event) => updateAlertThreshold("rsiHigh", event.target.value)}
+                  />
+                </label>
+                <label>
+                  RSI Low
+                  <input
+                    type="number"
+                    min="5"
+                    max="45"
+                    value={alertConfig.rsiLow}
+                    onChange={(event) => updateAlertThreshold("rsiLow", event.target.value)}
+                  />
+                </label>
+                <label>
+                  Volatility %
+                  <input
+                    type="number"
+                    min="10"
+                    max="120"
+                    value={alertConfig.volatilityHigh}
+                    onChange={(event) => updateAlertThreshold("volatilityHigh", event.target.value)}
+                  />
+                </label>
+                <label>
+                  Level Buffer %
+                  <input
+                    type="number"
+                    min="0.2"
+                    max="10"
+                    step="0.1"
+                    value={alertConfig.levelBufferPct}
+                    onChange={(event) => updateAlertThreshold("levelBufferPct", event.target.value)}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="deck-depth-card">
+              <div className="deck-depth-head">
+                <h3>Replay Control</h3>
+                <span className="status-chip status-neutral">{replayHistory.length} captures</span>
+              </div>
+              <p>Inspect score momentum between scans and jump to previous market leaders instantly.</p>
+              <div className="mini-replay-strip">
+                {replaySeries.map((snapshot) => {
+                  const snapshotScore = clamp(Number(snapshot.avgScore || 0), 0, 100);
+                  return (
+                    <button
+                      key={`mini-${snapshot.id}`}
+                      type="button"
+                      className={`mini-replay-bar ${snapshot.id === replaySelection?.id ? "active" : ""}`}
+                      onClick={() => selectReplaySnapshot(snapshot)}
+                    >
+                      <span style={{ height: `${Math.round(8 + (snapshotScore / 100) * 38)}px` }} />
+                    </button>
+                  );
+                })}
+                {!replaySeries.length && <p className="hint-text">No snapshots yet.</p>}
+              </div>
+              <div className="deck-depth-meta">
+                <div>
+                  <span>Current Leader</span>
+                  <strong>{replaySelection?.leaderTicker || "--"}</strong>
+                </div>
+                <div>
+                  <span>Last Score</span>
+                  <strong>{replaySelection ? Number(replaySelection.avgScore || 0).toFixed(1) : "--"}</strong>
+                </div>
+              </div>
+              <div className="deck-depth-actions">
+                <button
+                  type="button"
+                  className="ghost-action"
+                  onClick={() => replaySelection?.leaderTicker && setFocusTicker(replaySelection.leaderTicker)}
+                  disabled={!replaySelection?.leaderTicker}
+                >
+                  Focus Leader
+                </button>
+                <button type="button" className="ghost-action" onClick={clearScanReplay} disabled={!replayHistory.length}>
+                  Clear Timeline
+                </button>
               </div>
             </div>
           </div>
@@ -2397,6 +2948,81 @@ function App() {
               </>
             ) : (
               <p className="hint-text">No risk radar yet.</p>
+            )}
+          </motion.div>
+
+          <motion.div
+            ref={sentinelPanelRef}
+            className="glass-card sentinel-panel"
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ ...STAGGER_ITEM, delay: 0.36 }}
+          >
+            <div className="section-head inline">
+              <div>
+                <h2>Signal Sentinel</h2>
+                <p>Live rule-based surveillance across active scan signals.</p>
+              </div>
+              <span className={`status-chip ${sentinelStatus.chipClass}`}>{sentinelStatus.label}</span>
+            </div>
+
+            <div className="sentinel-stats">
+              <div>
+                <span>Total</span>
+                <strong>{sentinelCounts.total}</strong>
+              </div>
+              <div>
+                <span>High</span>
+                <strong>{sentinelCounts.high}</strong>
+              </div>
+              <div>
+                <span>Medium</span>
+                <strong>{sentinelCounts.medium}</strong>
+              </div>
+              <div>
+                <span>Low</span>
+                <strong>{sentinelCounts.low}</strong>
+              </div>
+            </div>
+
+            <div className="sentinel-actions">
+              <button type="button" className="ghost-action" onClick={toggleAlertEngine}>
+                {alertConfig.enabled ? "Disable Engine" : "Enable Engine"}
+              </button>
+              <button
+                type="button"
+                className="ghost-action"
+                onClick={clearDismissedAlerts}
+                disabled={!Object.keys(dismissedAlerts || {}).length}
+              >
+                Reset Dismissed
+              </button>
+            </div>
+
+            {alertConfig.enabled ? (
+              <div className="sentinel-list">
+                {sentinelAlerts.slice(0, 8).map((alert) => (
+                  <div key={alert.id} className={`sentinel-item ${alertSeverityClass(alert.severity)}`}>
+                    <div>
+                      <p>
+                        {alert.ticker} · {alert.title}
+                      </p>
+                      <small>{alert.detail}</small>
+                    </div>
+                    <div className="sentinel-item-tail">
+                      <span>{formatRelativeTime(alert.at)}</span>
+                      <button type="button" onClick={() => dismissSentinelAlert(alert.id)}>
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {sentinelAlerts.length === 0 && (
+                  <p className="hint-text">No active alerts. Sentinel is running with current thresholds.</p>
+                )}
+              </div>
+            ) : (
+              <p className="hint-text">Sentinel is disabled. Enable it from Command Deck or the command menu.</p>
             )}
           </motion.div>
         </div>
