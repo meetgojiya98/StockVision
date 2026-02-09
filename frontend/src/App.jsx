@@ -3039,9 +3039,9 @@ function App() {
           <span className="orb orb-b" />
           <span className="orb orb-c" />
         </div>
-        <section className="auth-grid">
-          <div className="glass-card auth-story-card">
-            <div className="auth-story-top">
+        <section className="auth-home-shell">
+          <div className="glass-card auth-home-hero">
+            <div className="auth-home-top">
               <div className="brand-wrap">
                 <BrandLogo />
                 <div>
@@ -3049,14 +3049,20 @@ function App() {
                   <p className="brand-subtitle">Market Intelligence OS</p>
                 </div>
               </div>
-              <span className="auth-story-chip">Cloud Vault Enabled</span>
+              <div className="auth-home-top-badges">
+                <span>Always-free data</span>
+                <span>Cloud memory on</span>
+              </div>
             </div>
-            <h1>Your trading command center should remember everything, everywhere.</h1>
-            <p>
-              Save your market universe, scanner tuning, execution lab, portfolio stress setup, and strategy
-              configurations into one secure profile that follows you across devices.
-            </p>
-            <div className="auth-story-actions">
+            <div className="auth-home-copy">
+              <p className="auth-home-kicker">The modern investor cockpit</p>
+              <h1>A cleaner way to scan markets, reason with AI, and execute with discipline.</h1>
+              <p>
+                Built like a premium product surface: clear workflow lanes, immediate command actions, and persistent
+                cloud state that follows you across sessions.
+              </p>
+            </div>
+            <div className="auth-home-cta">
               <button
                 type="button"
                 className="primary-action"
@@ -3066,7 +3072,7 @@ function App() {
                   setAuthNotice("");
                 }}
               >
-                Start With Sign Up
+                Create Free Account
               </button>
               <button
                 type="button"
@@ -3077,138 +3083,150 @@ function App() {
                   setAuthNotice("");
                 }}
               >
-                I Already Have Access
+                Sign In To Continue
               </button>
             </div>
-            <div className="auth-feature-grid">
-              <div>
-                <span>State Continuity</span>
-                <p>Every critical setting is auto-saved with versioned profile sync.</p>
-              </div>
-              <div>
-                <span>Execution Memory</span>
-                <p>Keep your execution sizing, risk controls, and staged workflows intact.</p>
-              </div>
-              <div>
-                <span>Session Security</span>
-                <p>Tokenized sessions with explicit sync and sign-out controls.</p>
-              </div>
+            <div className="auth-home-metric-grid">
+              <article>
+                <p>Scanner Engine</p>
+                <strong>Profile-based ranking</strong>
+                <small>Momentum, mean reversion, breakout in one lane.</small>
+              </article>
+              <article>
+                <p>AI Copilot</p>
+                <strong>Actionable market brief</strong>
+                <small>Risk-aware tactical levels plus future projection.</small>
+              </article>
+              <article>
+                <p>Portfolio Guardrails</p>
+                <strong>Live concentration and VaR</strong>
+                <small>See stress impact before committing new risk.</small>
+              </article>
+              <article>
+                <p>Execution Deck</p>
+                <strong>Sized plans, one-click staging</strong>
+                <small>Move from idea to execution without context loss.</small>
+              </article>
             </div>
-            <div className="auth-preview-panel">
-              <h3>Inside your synced home</h3>
-              <div className="auth-preview-grid">
-                <div>
-                  <span>Scanner Profiles</span>
-                  <strong>Momentum, MR, Breakout</strong>
-                </div>
-                <div>
-                  <span>Portfolio Ops</span>
-                  <strong>VaR + Guardrails + Rebalance</strong>
-                </div>
-                <div>
-                  <span>AI Intelligence</span>
-                  <strong>Tactical levels + future projection</strong>
-                </div>
-                <div>
-                  <span>Cloud Status</span>
-                  <strong>Auto-sync with manual override</strong>
-                </div>
-              </div>
-            </div>
-            <div className="auth-proof-row">
+            <div className="auth-home-journey">
               <div>
-                <strong>Free data stack</strong>
-                <span>Yahoo primary + fallback feeds</span>
+                <span>01</span>
+                <p>Scan market + rank setups</p>
               </div>
               <div>
-                <strong>Execution aware</strong>
-                <span>Sizing, plan score, and portfolio staging</span>
+                <span>02</span>
+                <p>Generate AI brief + thesis</p>
               </div>
               <div>
-                <strong>Cloud continuity</strong>
-                <span>Persistent state, settings, and profile memory</span>
+                <span>03</span>
+                <p>Stage execution + track risk</p>
               </div>
             </div>
           </div>
 
-          <form className="glass-card auth-card" onSubmit={handleAuthSubmit}>
-            <div className="auth-head">
-              <h2>{authMode === "signup" ? "Create Account" : "Sign In"}</h2>
-              <p>{authMode === "signup" ? "Start syncing your full app state." : "Continue from your last cloud session."}</p>
-            </div>
-            <div className="auth-mode-toggle">
-              <button
-                type="button"
-                className={`segment-button ${authMode === "signin" ? "active" : ""}`}
-                onClick={() => {
-                  setAuthMode("signin");
-                  setAuthError("");
-                  setAuthNotice("");
-                }}
-              >
-                Sign In
-              </button>
-              <button
-                type="button"
-                className={`segment-button ${authMode === "signup" ? "active" : ""}`}
-                onClick={() => {
-                  setAuthMode("signup");
-                  setAuthError("");
-                  setAuthNotice("");
-                }}
-              >
-                Sign Up
-              </button>
-            </div>
+          <div className="auth-home-right">
+            <form className="glass-card auth-card auth-card-modern" onSubmit={handleAuthSubmit}>
+              <p className="auth-card-kicker">Secure Access</p>
+              <div className="auth-head">
+                <h2>{authMode === "signup" ? "Create Account" : "Sign In"}</h2>
+                <p>{authMode === "signup" ? "Start syncing your full app state." : "Continue from your last cloud session."}</p>
+              </div>
+              <div className="auth-mode-toggle">
+                <button
+                  type="button"
+                  className={`segment-button ${authMode === "signin" ? "active" : ""}`}
+                  onClick={() => {
+                    setAuthMode("signin");
+                    setAuthError("");
+                    setAuthNotice("");
+                  }}
+                >
+                  Sign In
+                </button>
+                <button
+                  type="button"
+                  className={`segment-button ${authMode === "signup" ? "active" : ""}`}
+                  onClick={() => {
+                    setAuthMode("signup");
+                    setAuthError("");
+                    setAuthNotice("");
+                  }}
+                >
+                  Sign Up
+                </button>
+              </div>
 
-            {authMode === "signup" ? (
+              {authMode === "signup" ? (
+                <label>
+                  Name
+                  <input
+                    type="text"
+                    value={authForm.name}
+                    onChange={(event) => setAuthForm((previous) => ({ ...previous, name: event.target.value }))}
+                    placeholder="Your name"
+                    autoComplete="name"
+                  />
+                </label>
+              ) : null}
               <label>
-                Name
+                Email
                 <input
-                  type="text"
-                  value={authForm.name}
-                  onChange={(event) => setAuthForm((previous) => ({ ...previous, name: event.target.value }))}
-                  placeholder="Your name"
-                  autoComplete="name"
+                  type="email"
+                  value={authForm.email}
+                  onChange={(event) => setAuthForm((previous) => ({ ...previous, email: event.target.value }))}
+                  placeholder="you@example.com"
+                  autoComplete="email"
                 />
               </label>
-            ) : null}
-            <label>
-              Email
-              <input
-                type="email"
-                value={authForm.email}
-                onChange={(event) => setAuthForm((previous) => ({ ...previous, email: event.target.value }))}
-                placeholder="you@example.com"
-                autoComplete="email"
-              />
-            </label>
-            <label>
-              Password
-              <input
-                type="password"
-                value={authForm.password}
-                onChange={(event) => setAuthForm((previous) => ({ ...previous, password: event.target.value }))}
-                placeholder="At least 8 characters"
-                autoComplete={authMode === "signup" ? "new-password" : "current-password"}
-              />
-            </label>
-            <button type="submit" className="primary-action auth-submit" disabled={authSubmitting}>
-              {authSubmitting
-                ? authMode === "signup"
-                  ? "Creating Account..."
-                  : "Signing In..."
-                : authMode === "signup"
-                ? "Create Account"
-                : "Sign In"}
-            </button>
+              <label>
+                Password
+                <input
+                  type="password"
+                  value={authForm.password}
+                  onChange={(event) => setAuthForm((previous) => ({ ...previous, password: event.target.value }))}
+                  placeholder="At least 8 characters"
+                  autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+                />
+              </label>
+              <button type="submit" className="primary-action auth-submit" disabled={authSubmitting}>
+                {authSubmitting
+                  ? authMode === "signup"
+                    ? "Creating Account..."
+                    : "Signing In..."
+                  : authMode === "signup"
+                  ? "Create Account"
+                  : "Sign In"}
+              </button>
 
-            {authError ? <p className="error-text auth-error">{authError}</p> : null}
-            {authNotice && !authError ? <p className="scan-note auth-note">{authNotice}</p> : null}
-            <p className="hint-text auth-footnote">
-              Cloud sync is enabled immediately after authentication. You can manually sync or sign out anytime from the top bar.
-            </p>
-          </form>
+              {authError ? <p className="error-text auth-error">{authError}</p> : null}
+              {authNotice && !authError ? <p className="scan-note auth-note">{authNotice}</p> : null}
+              <p className="hint-text auth-footnote">
+                Cloud sync activates immediately after authentication. State, settings, and workspaces persist automatically.
+              </p>
+            </form>
+
+            <aside className="glass-card auth-side-proof">
+              <h3>What gets synced</h3>
+              <div className="auth-side-proof-grid">
+                <div>
+                  <span>Universe</span>
+                  <strong>Tickers + scanner profile</strong>
+                </div>
+                <div>
+                  <span>Workflow</span>
+                  <strong>Active tab + focus mode</strong>
+                </div>
+                <div>
+                  <span>Portfolio</span>
+                  <strong>Positions + guardrails</strong>
+                </div>
+                <div>
+                  <span>Strategy</span>
+                  <strong>Backtest + execution setup</strong>
+                </div>
+              </div>
+            </aside>
+          </div>
         </section>
       </div>
     );
