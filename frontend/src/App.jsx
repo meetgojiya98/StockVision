@@ -136,6 +136,172 @@ function riskClass(riskLevel) {
   return "risk-low";
 }
 
+function average(values) {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function computeStdDev(values) {
+  if (!values.length) return 0;
+  const mean = average(values);
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+function computeRsi(closes, period = 14) {
+  if (closes.length <= period) return 50;
+  let gains = 0;
+  let losses = 0;
+  for (let i = 1; i <= period; i += 1) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff > 0) gains += diff;
+    else losses -= diff;
+  }
+
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  for (let i = period + 1; i < closes.length; i += 1) {
+    const diff = closes[i] - closes[i - 1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? -diff : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
+
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - 100 / (1 + rs);
+}
+
+function buildFallbackMetrics(candles) {
+  if (!candles?.length) {
+    return {
+      lastClose: 0,
+      changePct: 0,
+      high: 0,
+      low: 0,
+      avgVolume: 0,
+      volatility: 0,
+      rsi14: 50,
+      sma20: 0,
+      sma50: 0,
+      trend: "Neutral",
+      momentum: "Neutral",
+      support: 0,
+      resistance: 0,
+      atr14: 0,
+      atrPct: 0,
+      performance5: 0,
+      performance20: 0,
+      maxDrawdown: 0,
+      volumeTrend: "Stable",
+      distanceToSupportPct: 0,
+      distanceToResistancePct: 0,
+      riskLevel: "Low",
+      signalScore: 50,
+      signalFlags: [],
+    };
+  }
+
+  const closes = candles.map((candle) => Number(candle.close) || 0);
+  const highs = candles.map((candle) => Number(candle.high) || 0);
+  const lows = candles.map((candle) => Number(candle.low) || 0);
+  const volumes = candles.map((candle) => Number(candle.volume) || 0);
+  const lastClose = closes.at(-1) || 0;
+  const prevClose = closes.at(-2) || lastClose || 1;
+  const changePct = ((lastClose - prevClose) / prevClose) * 100;
+  const high = Math.max(...highs);
+  const low = Math.min(...lows);
+  const avgVolume = average(volumes);
+  const returns = closes
+    .slice(1)
+    .map((close, index) => (close - closes[index]) / (closes[index] || 1))
+    .filter((value) => Number.isFinite(value));
+  const volatility = computeStdDev(returns) * Math.sqrt(252) * 100;
+  const rsi14 = computeRsi(closes, 14);
+  const sma20 = average(closes.slice(-20));
+  const sma50 = average(closes.slice(-50));
+  const support = Math.min(...lows.slice(-20));
+  const resistance = Math.max(...highs.slice(-20));
+  const trend =
+    lastClose > sma20 && sma20 > sma50 ? "Bullish" : lastClose < sma20 && sma20 < sma50 ? "Bearish" : "Range-bound";
+  const momentum =
+    rsi14 >= 70 ? "Overbought" : rsi14 <= 30 ? "Oversold" : rsi14 >= 55 ? "Positive" : rsi14 <= 45 ? "Negative" : "Neutral";
+
+  return {
+    lastClose,
+    changePct,
+    high,
+    low,
+    avgVolume,
+    volatility,
+    rsi14,
+    sma20,
+    sma50,
+    trend,
+    momentum,
+    support,
+    resistance,
+    atr14: 0,
+    atrPct: 0,
+    performance5: 0,
+    performance20: 0,
+    maxDrawdown: 0,
+    volumeTrend: "Stable",
+    distanceToSupportPct: 0,
+    distanceToResistancePct: 0,
+    riskLevel: "Low",
+    signalScore: 50,
+    signalFlags: [],
+  };
+}
+
+function normalizeScanResponse(response) {
+  const rawData = response?.data || {};
+  const normalizedData = {};
+  let legacyMode = false;
+
+  Object.entries(rawData).forEach(([ticker, payload]) => {
+    if (Array.isArray(payload)) {
+      legacyMode = true;
+      const candles = payload;
+      normalizedData[ticker] = {
+        candles,
+        metrics: buildFallbackMetrics(candles),
+      };
+      return;
+    }
+
+    const candles = Array.isArray(payload?.candles) ? payload.candles : [];
+    const metrics = payload?.metrics && typeof payload.metrics === "object" ? payload.metrics : buildFallbackMetrics(candles);
+    normalizedData[ticker] = { candles, metrics };
+  });
+
+  const fallbackLeaderboard = Object.entries(normalizedData)
+    .map(([ticker, payload]) => ({
+      ticker,
+      score: Number(payload.metrics.signalScore || 50),
+      riskLevel: payload.metrics.riskLevel || "Low",
+      trend: payload.metrics.trend || "Neutral",
+      momentum: payload.metrics.momentum || "Neutral",
+      changePct: Number(payload.metrics.changePct || 0),
+      performance20: Number(payload.metrics.performance20 || 0),
+    }))
+    .sort((left, right) => right.score - left.score);
+
+  return {
+    data: normalizedData,
+    meta: {
+      interval: response?.meta?.interval || "unknown",
+      outputsize: response?.meta?.outputsize || 0,
+      range: response?.meta?.range || "custom",
+      leaderboard: response?.meta?.leaderboard || fallbackLeaderboard,
+      correlations: response?.meta?.correlations || {},
+      legacyMode,
+    },
+  };
+}
+
 function scoreByProfile(metrics, profile) {
   if (!metrics) return 0;
   const base = Number(metrics.signalScore || 50);
@@ -362,8 +528,9 @@ function App() {
         tickers: selectedTickers,
         range,
       });
-      setMarketData(response.data || {});
-      setMarketMeta(response.meta || null);
+      const normalized = normalizeScanResponse(response);
+      setMarketData(normalized.data || {});
+      setMarketMeta(normalized.meta || null);
       setLastRefresh(new Date());
     } catch (error) {
       setDataError(error.message || "Unable to load market data.");
@@ -887,6 +1054,11 @@ function App() {
 
           {dataError && <p className="error-text">{dataError}</p>}
           {pulseError && <p className="error-text">{pulseError}</p>}
+          {marketMeta?.legacyMode && (
+            <p className="hint-text">
+              Connected backend is on an older API format. Compatibility mode is active.
+            </p>
+          )}
         </motion.div>
 
         <motion.div
