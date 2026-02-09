@@ -1440,6 +1440,90 @@ textarea {
   font-size: 0.82rem;
 }
 
+.delta-panel {
+  margin-top: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 11px;
+}
+
+.delta-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.delta-head h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-family: "Sora", sans-serif;
+}
+
+.delta-summary {
+  margin-top: 9px;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.delta-summary > div {
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 7px 8px;
+}
+
+.delta-summary span {
+  display: block;
+  color: var(--text-soft);
+  font-size: 0.71rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.delta-summary strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.86rem;
+}
+
+.delta-list {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.delta-item {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-main);
+  padding: 7px 9px;
+  display: grid;
+  grid-template-columns: 0.8fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+}
+
+.delta-item strong {
+  font-size: 0.8rem;
+}
+
+.delta-item span {
+  color: var(--text-soft);
+  font-size: 0.76rem;
+}
+
+.delta-item em {
+  font-style: normal;
+  font-size: 0.76rem;
+}
+
 .command-actions {
   margin-top: 16px;
   display: flex;
@@ -2005,6 +2089,166 @@ kbd {
 .alert-low {
   border-color: rgba(108, 242, 212, 0.45);
   background: rgba(108, 242, 212, 0.08);
+}
+
+.alpha-panel {
+  padding: 20px;
+}
+
+.alpha-lead-note {
+  margin: 10px 0 0;
+  color: var(--text-soft);
+  font-size: 0.82rem;
+}
+
+.alpha-lead-note strong {
+  color: var(--text-main);
+}
+
+.alpha-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.alpha-item {
+  border-radius: 13px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 10px 11px;
+}
+
+.alpha-item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.alpha-item-head h4 {
+  margin: 0;
+  font-size: 0.88rem;
+  font-family: "Sora", sans-serif;
+}
+
+.alpha-item-head span {
+  font-size: 0.74rem;
+}
+
+.alpha-metrics {
+  margin-top: 8px;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.alpha-metrics > div {
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 7px 8px;
+}
+
+.alpha-metrics span {
+  display: block;
+  color: var(--text-soft);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.alpha-metrics strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.8rem;
+}
+
+.alpha-tags {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.alpha-tags span {
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 3px 8px;
+  font-size: 0.72rem;
+}
+
+.alpha-progress {
+  margin-top: 8px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.alpha-progress span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), #58a5ff);
+}
+
+.alpha-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.alpha-actions .ghost-action {
+  padding: 6px 10px;
+  font-size: 0.75rem;
+}
+
+.guardrail-panel {
+  margin-top: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 10px;
+}
+
+.guardrail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.guardrail-head h4 {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.guardrail-list {
+  margin-top: 8px;
+  display: grid;
+  gap: 7px;
+}
+
+.guardrail-item {
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  padding: 8px 9px;
+}
+
+.guardrail-item p {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.guardrail-item small {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: var(--text-soft);
+  line-height: 1.35;
 }
 
 .bottom-grid {
@@ -2642,11 +2886,13 @@ kbd {
   .deck-depth-grid,
   .threshold-grid,
   .deck-depth-meta,
+  .delta-summary,
   .pulse-summary-grid,
   .pulse-list,
   .leader-laggard-grid,
   .metrics-grid,
   .sentinel-stats,
+  .alpha-metrics,
   .tactical-levels,
   .future-projection,
   .backtest-row,
@@ -2687,6 +2933,11 @@ kbd {
 
   .replay-selection-head {
     flex-direction: column;
+  }
+
+  .delta-item {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 
   .sentinel-item {

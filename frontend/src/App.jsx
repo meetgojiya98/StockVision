@@ -577,6 +577,7 @@ function App() {
   const [selectedReplayId, setSelectedReplayId] = useState(null);
   const lastWorkspaceRef = useRef(activeWorkspace);
   const sentinelPanelRef = useRef(null);
+  const alphaPanelRef = useRef(null);
   const seenAlertIdsRef = useRef(new Set());
 
   const [marketData, setMarketData] = useState({});
@@ -707,6 +708,13 @@ function App() {
     setActiveWorkspace("market");
     if (sentinelPanelRef.current) {
       sentinelPanelRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [setActiveWorkspace]);
+
+  const revealAlphaPanel = useCallback(() => {
+    setActiveWorkspace("market");
+    if (alphaPanelRef.current) {
+      alphaPanelRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, [setActiveWorkspace]);
 
@@ -1223,6 +1231,95 @@ function App() {
     if (replayHistory.length < 2) return 0;
     return Number(replayHistory[0].avgScore || 0) - Number(replayHistory[1].avgScore || 0);
   }, [replayHistory]);
+  const previousReplaySnapshot = replayHistory[1] || null;
+  const scanDeltaUniverse = useMemo(() => {
+    if (!previousReplaySnapshot || !Array.isArray(previousReplaySnapshot.rows)) return [];
+    const previousByTicker = Object.fromEntries(
+      previousReplaySnapshot.rows.map((row) => [
+        row.ticker,
+        Number(row.profileScore ?? row.signalScore ?? 0),
+      ])
+    );
+
+    return rankedSignals
+      .map((row) => {
+        const previousScore = previousByTicker[row.ticker];
+        if (!Number.isFinite(previousScore)) return null;
+        const currentScore = Number(row.profileScore || 0);
+        return {
+          ticker: row.ticker,
+          currentScore,
+          previousScore,
+          delta: currentScore - previousScore,
+          trend: row.metrics?.trend || "Neutral",
+          momentum: row.metrics?.momentum || "Neutral",
+        };
+      })
+      .filter(Boolean);
+  }, [previousReplaySnapshot, rankedSignals]);
+  const scanDeltaTopMovers = useMemo(
+    () =>
+      scanDeltaUniverse
+        .slice()
+        .sort((left, right) => Math.abs(right.delta) - Math.abs(left.delta))
+        .slice(0, 6),
+    [scanDeltaUniverse]
+  );
+  const scanDeltaSummary = useMemo(() => {
+    return scanDeltaUniverse.reduce(
+      (summary, row) => {
+        if (row.delta > 0.1) summary.improved += 1;
+        else if (row.delta < -0.1) summary.faded += 1;
+        else summary.flat += 1;
+        return summary;
+      },
+      { improved: 0, faded: 0, flat: 0 }
+    );
+  }, [scanDeltaUniverse]);
+  const alphaOpportunities = useMemo(() => {
+    return rankedSignals.slice(0, 6).map((row, index) => {
+      const metrics = row.metrics || {};
+      const price = Number(metrics.lastClose || 0);
+      const support = Number(metrics.support || price || 0);
+      const resistance = Number(metrics.resistance || price || 0);
+      const trend = metrics.trend || "Neutral";
+      const momentum = metrics.momentum || "Neutral";
+      const bullish = trend !== "Bearish";
+      const riskUnit = Math.max(Number(metrics.atr14 || 0), Math.abs(price) * 0.01, 0.35);
+      const entryAnchor = price || Number(metrics.sma20 || 0) || support || resistance || 0;
+      const entryLow = Math.max(0, entryAnchor - riskUnit * (bullish ? 0.35 : 0.2));
+      const entryHigh = Math.max(entryLow, entryAnchor + riskUnit * (bullish ? 0.35 : 0.2));
+      const stop = bullish ? Math.max(0, support - riskUnit * 0.6) : resistance + riskUnit * 0.6;
+      const target = bullish
+        ? Math.max(entryAnchor, resistance + riskUnit * 0.7)
+        : Math.max(0, support - riskUnit * 0.7);
+      const anchorEntry = bullish ? entryHigh : entryLow;
+      const riskPerShare = Math.max(0.01, Math.abs(anchorEntry - stop));
+      const rewardPerShare = Math.max(0.01, Math.abs(target - anchorEntry));
+      const rr = rewardPerShare / riskPerShare;
+      const conviction = clamp(
+        Math.round(Number(row.profileScore || 0) * 0.65 + Number(metrics.signalScore || 50) * 0.35),
+        0,
+        100
+      );
+
+      return {
+        id: `${row.ticker}-${index}`,
+        ticker: row.ticker,
+        direction: bullish ? "Long Bias" : "Short Bias",
+        trend,
+        momentum,
+        conviction,
+        rr,
+        entryLow,
+        entryHigh,
+        stop,
+        target,
+        riskBudgetPct: clamp((conviction / 100) * 1.8, 0.35, 2.2),
+      };
+    });
+  }, [rankedSignals]);
+  const topOpportunity = alphaOpportunities[0] || null;
 
   const sentinelAlerts = useMemo(() => {
     if (!alertConfig.enabled) return [];
@@ -1611,6 +1708,41 @@ function App() {
     }
   }, [aiPrompt, focusMetrics, focusPayload, focusTicker, pulseSummary, recordActivity, riskProfile, scannerProfile, setAiHistory, strategyStyle]);
 
+  const draftOpportunityBrief = useCallback(
+    (opportunity) => {
+      if (!opportunity?.ticker) {
+        recordActivity("neutral", "No opportunity draft", "Run a market scan to generate opportunities.");
+        return;
+      }
+      const prompt = `Build a ${riskProfile} ${strategyStyle} plan for ${opportunity.ticker}. Bias: ${
+        opportunity.direction
+      }. Entry zone: ${formatCurrency(opportunity.entryLow)} - ${formatCurrency(opportunity.entryHigh)}. Stop: ${formatCurrency(
+        opportunity.stop
+      )}. Target: ${formatCurrency(opportunity.target)}. Focus on ${scannerProfile} confirmation, invalidation timing, and position sizing.`;
+      setFocusTicker(opportunity.ticker);
+      setAiPrompt(prompt);
+      setActiveWorkspace("intelligence");
+      recordActivity("success", "Opportunity prompt drafted", `${opportunity.ticker} plan staged in AI workspace`);
+    },
+    [recordActivity, riskProfile, scannerProfile, setActiveWorkspace, strategyStyle]
+  );
+
+  const stageOpportunityBacktest = useCallback(
+    (opportunity) => {
+      if (!opportunity?.ticker) {
+        recordActivity("neutral", "No backtest staged", "Run a market scan to identify top opportunities.");
+        return;
+      }
+      setBacktestConfig((previous) => ({
+        ...previous,
+        ticker: opportunity.ticker,
+      }));
+      setActiveWorkspace("strategy");
+      recordActivity("workspace", "Backtest staged", `${opportunity.ticker} loaded into Strategy Lab`);
+    },
+    [recordActivity, setActiveWorkspace, setBacktestConfig]
+  );
+
   const commandPaletteActions = useMemo(
     () => [
       {
@@ -1738,6 +1870,30 @@ function App() {
         run: () => revealSentinelPanel(),
       },
       {
+        id: "jump-alpha",
+        label: "Jump To Alpha Board",
+        description: "Open the opportunity panel with setup blueprints.",
+        shortcut: "Alpha",
+        keywords: "alpha board opportunity panel",
+        run: () => revealAlphaPanel(),
+      },
+      {
+        id: "draft-top-opportunity",
+        label: "Draft AI Brief: Top Opportunity",
+        description: "Send the highest-ranked setup to AI workspace prompt.",
+        shortcut: "Draft",
+        keywords: "opportunity ai brief top setup",
+        run: () => draftOpportunityBrief(topOpportunity),
+      },
+      {
+        id: "stage-top-backtest",
+        label: "Stage Backtest: Top Opportunity",
+        description: "Load top setup into Strategy Lab backtest controls.",
+        shortcut: "Stage",
+        keywords: "opportunity backtest strategy lab",
+        run: () => stageOpportunityBacktest(topOpportunity),
+      },
+      {
         id: "clear-replay",
         label: "Clear Scan Replay Timeline",
         description: "Remove replay snapshots and start fresh.",
@@ -1783,15 +1939,19 @@ function App() {
       clearDismissedAlerts,
       clearScanReplay,
       clearActivityFeed,
+      draftOpportunityBrief,
       focusMode,
       generateAiBrief,
       refreshNews,
       refreshPulse,
+      revealAlphaPanel,
       revealSentinelPanel,
       runBacktestScenario,
       runMarketScan,
       setActiveWorkspace,
+      stageOpportunityBacktest,
       testBackendConnection,
+      topOpportunity,
       toggleAlertEngine,
       toggleFocusMode,
     ]
@@ -1906,6 +2066,9 @@ function App() {
       } else if (key === "b") {
         event.preventDefault();
         generateAiBrief();
+      } else if (key === "a") {
+        event.preventDefault();
+        draftOpportunityBrief(topOpportunity);
       }
     };
 
@@ -1915,6 +2078,7 @@ function App() {
     closeCommandPalette,
     commandPaletteIndex,
     commandPaletteOpen,
+    draftOpportunityBrief,
     executeCommandAction,
     filteredCommandActions,
     generateAiBrief,
@@ -1923,6 +2087,7 @@ function App() {
     refreshPulse,
     runMarketScan,
     setActiveWorkspace,
+    topOpportunity,
     toggleFocusMode,
   ]);
 
@@ -2026,6 +2191,65 @@ function App() {
     const top3 = sorted.slice(0, 3).reduce((sum, row) => sum + row.weight, 0);
     return { top1, top3 };
   }, [portfolioRows]);
+  const portfolioGuardrails = useMemo(() => {
+    if (!portfolioRows.length || portfolioTotals.marketValue <= 0) return [];
+    const guardrails = [];
+    const varPct = (portfolioDailyVar95 / portfolioTotals.marketValue) * 100;
+    const unrealizedPct =
+      portfolioTotals.costBasis > 0 ? (portfolioTotals.pnl / portfolioTotals.costBasis) * 100 : 0;
+
+    if (concentrationStats.top1 >= 0.4) {
+      guardrails.push({
+        id: "top1",
+        severity: "high",
+        title: "Single-position concentration risk",
+        detail: `Top holding is ${formatPercent(concentrationStats.top1 * 100)} of portfolio value.`,
+      });
+    } else if (concentrationStats.top1 >= 0.28) {
+      guardrails.push({
+        id: "top1-watch",
+        severity: "medium",
+        title: "Concentration trending high",
+        detail: `Top holding is ${formatPercent(concentrationStats.top1 * 100)} of portfolio value.`,
+      });
+    }
+
+    if (varPct >= 4.5) {
+      guardrails.push({
+        id: "var-high",
+        severity: "high",
+        title: "1-day VaR is elevated",
+        detail: `Estimated VaR is ${varPct.toFixed(2)}% of portfolio value.`,
+      });
+    } else if (varPct >= 3) {
+      guardrails.push({
+        id: "var-mid",
+        severity: "medium",
+        title: "1-day VaR entering caution zone",
+        detail: `Estimated VaR is ${varPct.toFixed(2)}% of portfolio value.`,
+      });
+    }
+
+    if (unrealizedPct <= -8) {
+      guardrails.push({
+        id: "drawdown",
+        severity: "high",
+        title: "Portfolio drawdown breach",
+        detail: `Unrealized return is ${formatPercent(unrealizedPct)} against cost basis.`,
+      });
+    }
+
+    if (portfolioRows.length < 3) {
+      guardrails.push({
+        id: "diversification",
+        severity: "low",
+        title: "Diversification is shallow",
+        detail: `Only ${portfolioRows.length} position${portfolioRows.length === 1 ? "" : "s"} tracked.`,
+      });
+    }
+
+    return guardrails.slice(0, 5);
+  }, [concentrationStats.top1, portfolioDailyVar95, portfolioRows, portfolioTotals.costBasis, portfolioTotals.marketValue, portfolioTotals.pnl]);
 
   const rebalanceRows = useMemo(() => {
     if (portfolioRows.length === 0 || portfolioTotals.marketValue <= 0) return [];
@@ -2206,7 +2430,7 @@ function App() {
             <kbd>Shift+B</kbd>
           </button>
         </div>
-        <p className="shortcut-copy">Press "/" to jump to ticker search instantly.</p>
+        <p className="shortcut-copy">Press "/" for ticker search and Shift+A to draft top opportunity AI plan.</p>
       </motion.section>
 
       <section className="glass-card workspace-nav">
@@ -2625,6 +2849,49 @@ function App() {
             </div>
           </div>
 
+          <div className="delta-panel">
+            <div className="delta-head">
+              <h3>Scan Delta Intelligence</h3>
+              <span className="status-chip status-neutral">
+                {previousReplaySnapshot ? "vs previous scan" : "needs 2 scans"}
+              </span>
+            </div>
+            {scanDeltaUniverse.length > 0 ? (
+              <>
+                <div className="delta-summary">
+                  <div>
+                    <span>Improved</span>
+                    <strong className="tone-positive">{scanDeltaSummary.improved}</strong>
+                  </div>
+                  <div>
+                    <span>Faded</span>
+                    <strong className="tone-negative">{scanDeltaSummary.faded}</strong>
+                  </div>
+                  <div>
+                    <span>Flat</span>
+                    <strong>{scanDeltaSummary.flat}</strong>
+                  </div>
+                </div>
+                <div className="delta-list">
+                  {scanDeltaTopMovers.map((row) => (
+                    <button
+                      key={`delta-${row.ticker}`}
+                      type="button"
+                      className="delta-item"
+                      onClick={() => setFocusTicker(row.ticker)}
+                    >
+                      <strong>{row.ticker}</strong>
+                      <span>{row.previousScore.toFixed(0)} → {row.currentScore.toFixed(0)}</span>
+                      <em className={toneClass(row.delta)}>{row.delta >= 0 ? "+" : ""}{row.delta.toFixed(1)}</em>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="hint-text">Run at least two scans to unlock score delta tracking.</p>
+            )}
+          </div>
+
           <div className="command-actions">
             <button type="button" className="primary-action" onClick={runMarketScan} disabled={loadingData}>
               <span>{loadingData ? "Scanning..." : "Run Market Scan"}</span>
@@ -3025,6 +3292,83 @@ function App() {
               <p className="hint-text">Sentinel is disabled. Enable it from Command Deck or the command menu.</p>
             )}
           </motion.div>
+
+          <motion.div
+            ref={alphaPanelRef}
+            className="glass-card alpha-panel"
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ ...STAGGER_ITEM, delay: 0.4 }}
+          >
+            <div className="section-head inline">
+              <div>
+                <h2>Alpha Opportunity Board</h2>
+                <p>Execution-ready setup blueprints ranked from live signal strength.</p>
+              </div>
+              <span className="status-chip status-neutral">{alphaOpportunities.length} active</span>
+            </div>
+            {topOpportunity ? (
+              <p className="alpha-lead-note">
+                Lead setup: <strong>{topOpportunity.ticker}</strong> · {topOpportunity.direction} · Conviction{" "}
+                {topOpportunity.conviction}
+              </p>
+            ) : null}
+            <div className="alpha-list">
+              {alphaOpportunities.map((opportunity) => (
+                <div key={opportunity.id} className="alpha-item">
+                  <div className="alpha-item-head">
+                    <h4>{opportunity.ticker}</h4>
+                    <span className={opportunity.direction === "Long Bias" ? "tone-positive" : "tone-negative"}>
+                      {opportunity.direction}
+                    </span>
+                  </div>
+                  <div className="alpha-metrics">
+                    <div>
+                      <span>Entry</span>
+                      <strong>
+                        {formatCurrency(opportunity.entryLow)} - {formatCurrency(opportunity.entryHigh)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Stop / Target</span>
+                      <strong>
+                        {formatCurrency(opportunity.stop)} / {formatCurrency(opportunity.target)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>R:R</span>
+                      <strong>{opportunity.rr.toFixed(2)}</strong>
+                    </div>
+                    <div>
+                      <span>Risk Budget</span>
+                      <strong>{opportunity.riskBudgetPct.toFixed(2)}%</strong>
+                    </div>
+                  </div>
+                  <div className="alpha-tags">
+                    <span>{opportunity.trend}</span>
+                    <span>{opportunity.momentum}</span>
+                  </div>
+                  <div className="alpha-progress">
+                    <span style={{ width: `${opportunity.conviction}%` }} />
+                  </div>
+                  <div className="alpha-actions">
+                    <button type="button" className="ghost-action" onClick={() => setFocusTicker(opportunity.ticker)}>
+                      Focus
+                    </button>
+                    <button type="button" className="ghost-action" onClick={() => draftOpportunityBrief(opportunity)}>
+                      Draft AI Plan
+                    </button>
+                    <button type="button" className="ghost-action" onClick={() => stageOpportunityBacktest(opportunity)}>
+                      Stage Backtest
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {!alphaOpportunities.length && (
+                <p className="hint-text">Run Market Scan to populate opportunity blueprints.</p>
+              )}
+            </div>
+          </motion.div>
         </div>
       </section>
 
@@ -3306,6 +3650,25 @@ function App() {
               <span>Positions</span>
               <strong>{portfolioRows.length}</strong>
             </div>
+          </div>
+
+          <div className="guardrail-panel">
+            <div className="guardrail-head">
+              <h4>Risk Guardrails</h4>
+              <span className="status-chip status-neutral">{portfolioGuardrails.length} active</span>
+            </div>
+            {portfolioGuardrails.length ? (
+              <div className="guardrail-list">
+                {portfolioGuardrails.map((item) => (
+                  <div key={item.id} className={`guardrail-item ${alertSeverityClass(item.severity)}`}>
+                    <p>{item.title}</p>
+                    <small>{item.detail}</small>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="hint-text">No major risk guardrails triggered.</p>
+            )}
           </div>
 
           {rebalanceRows.length > 1 && (
