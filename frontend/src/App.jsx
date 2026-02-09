@@ -75,6 +75,12 @@ const WORKSPACE_INFO = {
     hint: "Chart context plus backtest execution",
   },
 };
+const WORKSPACE_SHORT_LABEL = {
+  market: "Market",
+  intelligence: "Intel",
+  portfolio: "Portfolio",
+  strategy: "Strategy",
+};
 
 function usePersistentState(key, fallbackValue) {
   function normalizeParsed(parsed) {
@@ -500,6 +506,10 @@ function App() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestionsRef = useRef(null);
   const searchInputRef = useRef(null);
+  const commandPaletteInputRef = useRef(null);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
+  const [commandPaletteIndex, setCommandPaletteIndex] = useState(0);
 
   const [marketData, setMarketData] = useState({});
   const [marketMeta, setMarketMeta] = useState(null);
@@ -553,6 +563,16 @@ function App() {
     setActiveWorkspace("market");
   }, [activeWorkspace, setActiveWorkspace]);
 
+  const openCommandPalette = useCallback(() => {
+    setCommandPaletteOpen(true);
+  }, []);
+
+  const closeCommandPalette = useCallback(() => {
+    setCommandPaletteOpen(false);
+    setCommandPaletteQuery("");
+    setCommandPaletteIndex(0);
+  }, []);
+
   useEffect(() => {
     if (!Array.isArray(selectedTickers)) {
       setSelectedTickers(DEFAULT_TICKERS);
@@ -586,6 +606,19 @@ function App() {
     window.addEventListener("mousedown", handleOutsideClick);
     return () => window.removeEventListener("mousedown", handleOutsideClick);
   }, []);
+
+  useEffect(() => {
+    if (!commandPaletteOpen) return undefined;
+    const timer = window.setTimeout(() => {
+      commandPaletteInputRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [commandPaletteOpen]);
+
+  useEffect(() => {
+    if (!commandPaletteOpen) return;
+    setCommandPaletteIndex(0);
+  }, [commandPaletteOpen, commandPaletteQuery]);
 
   useEffect(() => {
     if (selectedTickers.length === 0) {
@@ -1107,12 +1140,182 @@ function App() {
     }
   }, [aiPrompt, focusMetrics, focusPayload, focusTicker, pulseSummary, riskProfile, scannerProfile, setAiHistory, strategyStyle]);
 
+  const commandPaletteActions = useMemo(
+    () => [
+      {
+        id: "scan",
+        label: "Run Market Scan",
+        description: "Fetch latest candles and recompute signal metrics.",
+        shortcut: "Shift+S",
+        keywords: "scan candles metrics market",
+        run: () => {
+          setActiveWorkspace("market");
+          runMarketScan();
+        },
+      },
+      {
+        id: "pulse",
+        label: "Refresh Market Pulse",
+        description: "Update breadth and leaders/laggards.",
+        shortcut: "Shift+P",
+        keywords: "pulse breadth refresh",
+        run: () => {
+          setActiveWorkspace("market");
+          refreshPulse();
+        },
+      },
+      {
+        id: "news",
+        label: "Refresh News Radar",
+        description: "Pull the newest headlines for selected symbols.",
+        shortcut: "Shift+N",
+        keywords: "news headlines refresh",
+        run: () => {
+          setActiveWorkspace("intelligence");
+          refreshNews();
+        },
+      },
+      {
+        id: "ai-brief",
+        label: "Generate AI Brief",
+        description: "Build tactical plan with levels and projection.",
+        shortcut: "Shift+B",
+        keywords: "ai brief strategy copilot",
+        run: () => {
+          setActiveWorkspace("intelligence");
+          generateAiBrief();
+        },
+      },
+      {
+        id: "backtest",
+        label: "Run Strategy Backtest",
+        description: "Execute SMA crossover backtest on active config.",
+        shortcut: "Lab",
+        keywords: "backtest strategy lab sma",
+        run: () => {
+          setActiveWorkspace("strategy");
+          runBacktestScenario();
+        },
+      },
+      {
+        id: "backend",
+        label: "Test Backend Connection",
+        description: "Check API status and provider connectivity.",
+        shortcut: "Deck",
+        keywords: "backend api health test",
+        run: () => {
+          setActiveWorkspace("market");
+          testBackendConnection();
+        },
+      },
+      {
+        id: "focus-search",
+        label: "Focus Ticker Search",
+        description: "Jump cursor into search bar for symbol lookup.",
+        shortcut: "/",
+        keywords: "search symbol ticker focus",
+        run: () => {
+          setActiveWorkspace("market");
+          searchInputRef.current?.focus();
+          setShowSuggestions(true);
+        },
+      },
+      {
+        id: "tab-market",
+        label: "Switch Workspace: Market",
+        description: "Scanner, pulse, chart arena, and signal matrix.",
+        shortcut: "Alt+1",
+        keywords: "workspace tab market",
+        run: () => setActiveWorkspace("market"),
+      },
+      {
+        id: "tab-intelligence",
+        label: "Switch Workspace: AI Intelligence",
+        description: "Copilot and news-focused workspace.",
+        shortcut: "Alt+2",
+        keywords: "workspace tab ai intelligence",
+        run: () => setActiveWorkspace("intelligence"),
+      },
+      {
+        id: "tab-portfolio",
+        label: "Switch Workspace: Portfolio Ops",
+        description: "Holdings, concentration, and scenario controls.",
+        shortcut: "Alt+3",
+        keywords: "workspace tab portfolio",
+        run: () => setActiveWorkspace("portfolio"),
+      },
+      {
+        id: "tab-strategy",
+        label: "Switch Workspace: Strategy Lab",
+        description: "Backtest execution with chart context.",
+        shortcut: "Alt+4",
+        keywords: "workspace tab strategy lab",
+        run: () => setActiveWorkspace("strategy"),
+      },
+    ],
+    [generateAiBrief, refreshNews, refreshPulse, runBacktestScenario, runMarketScan, setActiveWorkspace, testBackendConnection]
+  );
+
+  const filteredCommandActions = useMemo(() => {
+    const query = commandPaletteQuery.trim().toLowerCase();
+    if (!query) return commandPaletteActions;
+    return commandPaletteActions.filter((action) =>
+      `${action.label} ${action.description} ${action.keywords}`.toLowerCase().includes(query)
+    );
+  }, [commandPaletteActions, commandPaletteQuery]);
+
+  const executeCommandAction = useCallback(
+    (action) => {
+      if (!action || typeof action.run !== "function") return;
+      closeCommandPalette();
+      action.run();
+    },
+    [closeCommandPalette]
+  );
+
   useEffect(() => {
     const onKeyDown = (event) => {
       const key = String(event.key || "").toLowerCase();
       const editable = isEditableTarget(event.target);
 
-      if (key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && key === "k") {
+        event.preventDefault();
+        if (commandPaletteOpen) closeCommandPalette();
+        else openCommandPalette();
+        return;
+      }
+
+      if (commandPaletteOpen) {
+        if (key === "escape") {
+          event.preventDefault();
+          closeCommandPalette();
+          return;
+        }
+        if (key === "arrowdown") {
+          event.preventDefault();
+          setCommandPaletteIndex((previous) => {
+            if (!filteredCommandActions.length) return 0;
+            return Math.min(filteredCommandActions.length - 1, previous + 1);
+          });
+          return;
+        }
+        if (key === "arrowup") {
+          event.preventDefault();
+          setCommandPaletteIndex((previous) => Math.max(0, previous - 1));
+          return;
+        }
+        if (key === "enter") {
+          event.preventDefault();
+          const action =
+            filteredCommandActions[commandPaletteIndex] ||
+            filteredCommandActions[0];
+          executeCommandAction(action);
+          return;
+        }
+        return;
+      }
+
+      if (!editable && key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
         searchInputRef.current?.focus();
         setShowSuggestions(true);
@@ -1162,7 +1365,19 @@ function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [generateAiBrief, refreshNews, refreshPulse, runMarketScan, setActiveWorkspace]);
+  }, [
+    closeCommandPalette,
+    commandPaletteIndex,
+    commandPaletteOpen,
+    executeCommandAction,
+    filteredCommandActions,
+    generateAiBrief,
+    openCommandPalette,
+    refreshNews,
+    refreshPulse,
+    runMarketScan,
+    setActiveWorkspace,
+  ]);
 
   const handleAddPosition = (event) => {
     event.preventDefault();
@@ -1336,6 +1551,10 @@ function App() {
               Auto {autoRefreshSec ? `${autoRefreshSec}s` : "manual"}
             </span>
           </div>
+          <button type="button" className="command-launch" onClick={openCommandPalette}>
+            <span>Command Menu</span>
+            <kbd>Ctrl/Cmd+K</kbd>
+          </button>
           <button
             type="button"
             className="theme-toggle"
@@ -1435,7 +1654,7 @@ function App() {
             <h2>{activeWorkspaceInfo.label}</h2>
             <p>{activeWorkspaceInfo.hint}</p>
           </div>
-          <p className="workspace-shortcuts">Alt+1/2/3/4 to switch workspace</p>
+          <p className="workspace-shortcuts">Alt+1/2/3/4 workspace · Ctrl/Cmd+K command menu</p>
         </div>
         <div className="workspace-tablist" role="tablist" aria-label="Workspace tabs">
           {workspaceTabs.map((tab) => (
@@ -2474,6 +2693,71 @@ function App() {
           ) : null}
         </motion.div>
       </section>
+
+      <nav className="quick-dock" aria-label="Workspace quick dock">
+        {workspaceTabs.map((tab) => (
+          <button
+            key={`dock-${tab.id}`}
+            type="button"
+            className={`quick-dock-item ${activeWorkspace === tab.id ? "active" : ""}`}
+            onClick={() => setActiveWorkspace(tab.id)}
+          >
+            {WORKSPACE_SHORT_LABEL[tab.id] || tab.label}
+          </button>
+        ))}
+        <button type="button" className="quick-dock-item dock-command" onClick={openCommandPalette}>
+          Menu
+        </button>
+      </nav>
+
+      {commandPaletteOpen && (
+        <div className="command-palette-overlay" onClick={closeCommandPalette}>
+          <motion.div
+            className="command-palette-panel glass-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Command palette"
+            initial={{ opacity: 0, y: 14, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="command-palette-head">
+              <input
+                ref={commandPaletteInputRef}
+                value={commandPaletteQuery}
+                onChange={(event) => setCommandPaletteQuery(event.target.value)}
+                placeholder="Search commands, actions, or workspaces..."
+              />
+              <button type="button" className="ghost-action" onClick={closeCommandPalette}>
+                Close
+              </button>
+            </div>
+            <div className="command-palette-list">
+              {filteredCommandActions.length === 0 ? (
+                <p className="hint-text">No matching actions. Try another command keyword.</p>
+              ) : (
+                filteredCommandActions.map((action, index) => (
+                  <button
+                    key={`command-${action.id}`}
+                    type="button"
+                    className={`command-palette-item ${index === commandPaletteIndex ? "active" : ""}`}
+                    onMouseEnter={() => setCommandPaletteIndex(index)}
+                    onClick={() => executeCommandAction(action)}
+                  >
+                    <div>
+                      <span>{action.label}</span>
+                      <small>{action.description}</small>
+                    </div>
+                    <em>{action.shortcut}</em>
+                  </button>
+                ))
+              )}
+            </div>
+            <p className="command-palette-foot">Arrow keys + Enter to execute. Esc to close.</p>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }
