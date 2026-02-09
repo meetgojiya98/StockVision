@@ -284,6 +284,20 @@ function normalizeAlertConfig(rawConfig) {
   };
 }
 
+function normalizeExecutionConfig(rawConfig) {
+  const source = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  const accountSize = clamp(Number(source.accountSize) || 25000, 1000, 10000000);
+  const riskPerTradePct = clamp(Number(source.riskPerTradePct) || 1, 0.1, 5);
+  const maxPositionPct = clamp(Number(source.maxPositionPct) || 20, 2, 100);
+  const slippageBps = clamp(Number(source.slippageBps) || 8, 0, 100);
+  return {
+    accountSize: Math.round(accountSize),
+    riskPerTradePct: Number(riskPerTradePct.toFixed(2)),
+    maxPositionPct: Number(maxPositionPct.toFixed(2)),
+    slippageBps: Number(slippageBps.toFixed(2)),
+  };
+}
+
 function activityToneClass(kind) {
   if (kind === "error") return "activity-error";
   if (kind === "success") return "activity-success";
@@ -563,6 +577,7 @@ function App() {
   const [alertConfig, setAlertConfig] = usePersistentState("sv-alert-config", normalizeAlertConfig({}));
   const [dismissedAlerts, setDismissedAlerts] = usePersistentState("sv-dismissed-alerts", {});
   const [scanReplay, setScanReplay] = usePersistentState("sv-scan-replay", []);
+  const [executionConfig, setExecutionConfig] = usePersistentState("sv-execution-config", normalizeExecutionConfig({}));
 
   const [searchText, setSearchText] = useState("");
   const [suggestions, setSuggestions] = useState([]);
@@ -681,6 +696,15 @@ function App() {
     [setAlertConfig]
   );
 
+  const updateExecutionConfig = useCallback(
+    (key, rawValue) => {
+      const numeric = Number(rawValue);
+      if (!Number.isFinite(numeric)) return;
+      setExecutionConfig((previous) => normalizeExecutionConfig({ ...previous, [key]: numeric }));
+    },
+    [setExecutionConfig]
+  );
+
   const dismissSentinelAlert = useCallback(
     (alertId) => {
       if (!alertId) return;
@@ -731,6 +755,19 @@ function App() {
       setAlertConfig(normalized);
     }
   }, [alertConfig, setAlertConfig]);
+
+  useEffect(() => {
+    const normalized = normalizeExecutionConfig(executionConfig);
+    if (
+      !executionConfig ||
+      normalized.accountSize !== executionConfig.accountSize ||
+      normalized.riskPerTradePct !== executionConfig.riskPerTradePct ||
+      normalized.maxPositionPct !== executionConfig.maxPositionPct ||
+      normalized.slippageBps !== executionConfig.slippageBps
+    ) {
+      setExecutionConfig(normalized);
+    }
+  }, [executionConfig, setExecutionConfig]);
 
   useEffect(() => {
     if (dismissedAlerts && typeof dismissedAlerts === "object" && !Array.isArray(dismissedAlerts)) return;
@@ -1320,6 +1357,66 @@ function App() {
     });
   }, [rankedSignals]);
   const topOpportunity = alphaOpportunities[0] || null;
+  const executionPlans = useMemo(() => {
+    const riskBudgetDollars = executionConfig.accountSize * (executionConfig.riskPerTradePct / 100);
+    const maxPositionDollars = executionConfig.accountSize * (executionConfig.maxPositionPct / 100);
+    const slippagePct = executionConfig.slippageBps / 10000;
+
+    return alphaOpportunities.map((opportunity, index) => {
+      const directionalLong = opportunity.direction === "Long Bias";
+      const entryMid = (Number(opportunity.entryLow || 0) + Number(opportunity.entryHigh || 0)) / 2;
+      const effectiveEntry = directionalLong ? entryMid * (1 + slippagePct) : entryMid * (1 - slippagePct);
+      const riskPerShare = Math.max(0.01, Math.abs(effectiveEntry - Number(opportunity.stop || effectiveEntry)));
+      const rewardPerShare = directionalLong
+        ? Math.max(0.01, Number(opportunity.target || effectiveEntry) - effectiveEntry)
+        : Math.max(0.01, effectiveEntry - Number(opportunity.target || effectiveEntry));
+      const sharesByRisk = Math.floor(riskBudgetDollars / riskPerShare);
+      const sharesByCapital = Math.floor(maxPositionDollars / Math.max(0.01, Math.abs(effectiveEntry)));
+      const plannedShares = Math.max(0, Math.min(sharesByRisk, sharesByCapital));
+      const capitalUsed = plannedShares * Math.abs(effectiveEntry);
+      const potentialLoss = plannedShares * riskPerShare;
+      const potentialGain = plannedShares * rewardPerShare;
+      const planRR = potentialLoss > 0 ? potentialGain / potentialLoss : 0;
+      const planScore = clamp(
+        Math.round(opportunity.conviction * 0.6 + planRR * 16 + (directionalLong ? 6 : -3)),
+        0,
+        100
+      );
+
+      return {
+        id: `${opportunity.ticker}-plan-${index}`,
+        ticker: opportunity.ticker,
+        direction: opportunity.direction,
+        conviction: opportunity.conviction,
+        entry: effectiveEntry,
+        stop: Number(opportunity.stop || 0),
+        target: Number(opportunity.target || 0),
+        plannedShares,
+        capitalUsed,
+        potentialLoss,
+        potentialGain,
+        rr: planRR,
+        planScore,
+        canStage: directionalLong && plannedShares > 0,
+      };
+    });
+  }, [alphaOpportunities, executionConfig.accountSize, executionConfig.maxPositionPct, executionConfig.riskPerTradePct, executionConfig.slippageBps]);
+  const topExecutionPlan = executionPlans[0] || null;
+  const executionSummary = useMemo(() => {
+    return executionPlans.reduce(
+      (summary, plan) => {
+        if (plan.canStage) summary.stageable += 1;
+        if (plan.rr >= 2) summary.highRR += 1;
+        if (plan.planScore >= 75) summary.highScore += 1;
+        return summary;
+      },
+      { stageable: 0, highRR: 0, highScore: 0 }
+    );
+  }, [executionPlans]);
+  const executionPlanByTicker = useMemo(
+    () => Object.fromEntries(executionPlans.map((plan) => [plan.ticker, plan])),
+    [executionPlans]
+  );
 
   const sentinelAlerts = useMemo(() => {
     if (!alertConfig.enabled) return [];
@@ -1743,6 +1840,76 @@ function App() {
     [recordActivity, setActiveWorkspace, setBacktestConfig]
   );
 
+  const stageExecutionPlanPosition = useCallback(
+    (plan) => {
+      if (!plan?.ticker) {
+        recordActivity("neutral", "Execution staging skipped", "No execution plan available.");
+        return;
+      }
+      if (!plan.canStage) {
+        recordActivity("neutral", `Execution plan watchlist: ${plan.ticker}`, "Only long-bias plans can stage into portfolio.");
+        return;
+      }
+      const shares = Number(plan.plannedShares || 0);
+      const avgCost = Number(plan.entry || 0);
+      if (!Number.isFinite(shares) || shares <= 0 || !Number.isFinite(avgCost) || avgCost <= 0) {
+        recordActivity("error", "Execution staging failed", "Plan sizing is invalid. Adjust risk configuration.");
+        return;
+      }
+
+      setPositions((previous) => {
+        const existingIndex = previous.findIndex((position) => normalizeTicker(position.ticker) === plan.ticker);
+        if (existingIndex === -1) {
+          return [...previous, { ticker: plan.ticker, shares, avgCost }];
+        }
+
+        const existing = previous[existingIndex];
+        const combinedShares = existing.shares + shares;
+        const weightedCost =
+          combinedShares > 0
+            ? (existing.shares * existing.avgCost + shares * avgCost) / combinedShares
+            : existing.avgCost;
+
+        const updated = [...previous];
+        updated[existingIndex] = {
+          ticker: plan.ticker,
+          shares: Number(combinedShares.toFixed(4)),
+          avgCost: Number(weightedCost.toFixed(4)),
+        };
+        return updated;
+      });
+
+      setActiveWorkspace("portfolio");
+      recordActivity(
+        "success",
+        `Execution staged: ${plan.ticker}`,
+        `${formatCompactNumber(shares)} shares @ ${formatCurrency(avgCost)} · risk ${formatCurrency(plan.potentialLoss)}`
+      );
+    },
+    [recordActivity, setActiveWorkspace, setPositions]
+  );
+
+  const draftSizedExecutionBrief = useCallback(
+    (plan) => {
+      if (!plan?.ticker) {
+        recordActivity("neutral", "No execution brief drafted", "Generate scan signals first.");
+        return;
+      }
+      const prompt = `Create a ${riskProfile} ${strategyStyle} execution playbook for ${plan.ticker}. Direction: ${
+        plan.direction
+      }. Sized entry ${formatCurrency(plan.entry)} with ${formatCompactNumber(plan.plannedShares)} shares. Risk at stop ${
+        plan.stop ? formatCurrency(plan.stop) : "N/A"
+      } is ${formatCurrency(plan.potentialLoss)}. Target ${plan.target ? formatCurrency(plan.target) : "N/A"} yields ${formatCurrency(
+        plan.potentialGain
+      )}. Include staged entries, risk controls, and failure conditions.`;
+      setFocusTicker(plan.ticker);
+      setAiPrompt(prompt);
+      setActiveWorkspace("intelligence");
+      recordActivity("success", "Execution brief drafted", `${plan.ticker} sized playbook prepared`);
+    },
+    [recordActivity, riskProfile, setActiveWorkspace, strategyStyle]
+  );
+
   const commandPaletteActions = useMemo(
     () => [
       {
@@ -1894,6 +2061,22 @@ function App() {
         run: () => stageOpportunityBacktest(topOpportunity),
       },
       {
+        id: "stage-top-execution",
+        label: "Stage Position: Top Execution Plan",
+        description: "Add sized top plan directly to Portfolio Lab.",
+        shortcut: "Shift+X",
+        keywords: "execution plan size stage portfolio",
+        run: () => stageExecutionPlanPosition(topExecutionPlan),
+      },
+      {
+        id: "draft-top-execution",
+        label: "Draft AI Brief: Sized Execution Plan",
+        description: "Build AI playbook using risk-sized position parameters.",
+        shortcut: "Playbook",
+        keywords: "execution sized ai playbook",
+        run: () => draftSizedExecutionBrief(topExecutionPlan),
+      },
+      {
         id: "clear-replay",
         label: "Clear Scan Replay Timeline",
         description: "Remove replay snapshots and start fresh.",
@@ -1939,6 +2122,7 @@ function App() {
       clearDismissedAlerts,
       clearScanReplay,
       clearActivityFeed,
+      draftSizedExecutionBrief,
       draftOpportunityBrief,
       focusMode,
       generateAiBrief,
@@ -1949,8 +2133,10 @@ function App() {
       runBacktestScenario,
       runMarketScan,
       setActiveWorkspace,
+      stageExecutionPlanPosition,
       stageOpportunityBacktest,
       testBackendConnection,
+      topExecutionPlan,
       topOpportunity,
       toggleAlertEngine,
       toggleFocusMode,
@@ -2069,6 +2255,9 @@ function App() {
       } else if (key === "a") {
         event.preventDefault();
         draftOpportunityBrief(topOpportunity);
+      } else if (key === "x") {
+        event.preventDefault();
+        stageExecutionPlanPosition(topExecutionPlan);
       }
     };
 
@@ -2078,6 +2267,7 @@ function App() {
     closeCommandPalette,
     commandPaletteIndex,
     commandPaletteOpen,
+    draftSizedExecutionBrief,
     draftOpportunityBrief,
     executeCommandAction,
     filteredCommandActions,
@@ -2087,6 +2277,8 @@ function App() {
     refreshPulse,
     runMarketScan,
     setActiveWorkspace,
+    stageExecutionPlanPosition,
+    topExecutionPlan,
     topOpportunity,
     toggleFocusMode,
   ]);
@@ -2430,7 +2622,9 @@ function App() {
             <kbd>Shift+B</kbd>
           </button>
         </div>
-        <p className="shortcut-copy">Press "/" for ticker search and Shift+A to draft top opportunity AI plan.</p>
+        <p className="shortcut-copy">
+          Press "/" for ticker search, Shift+A to draft top opportunity AI plan, and Shift+X to stage top execution.
+        </p>
       </motion.section>
 
       <section className="glass-card workspace-nav">
@@ -3313,8 +3507,96 @@ function App() {
                 {topOpportunity.conviction}
               </p>
             ) : null}
+            <div className="execution-config-panel">
+              <div className="execution-config-head">
+                <h3>Execution Lab</h3>
+                <span className="status-chip status-neutral">
+                  {topExecutionPlan?.ticker ? `Top ${topExecutionPlan.ticker}` : "Awaiting plans"}
+                </span>
+              </div>
+              <p>Size opportunities by account risk before staging them into Portfolio Lab or AI playbooks.</p>
+              <div className="execution-config-grid">
+                <label>
+                  Account Size
+                  <input
+                    type="number"
+                    min="1000"
+                    step="500"
+                    value={executionConfig.accountSize}
+                    onChange={(event) => updateExecutionConfig("accountSize", event.target.value)}
+                  />
+                </label>
+                <label>
+                  Risk / Trade %
+                  <input
+                    type="number"
+                    min="0.1"
+                    max="5"
+                    step="0.1"
+                    value={executionConfig.riskPerTradePct}
+                    onChange={(event) => updateExecutionConfig("riskPerTradePct", event.target.value)}
+                  />
+                </label>
+                <label>
+                  Max Position %
+                  <input
+                    type="number"
+                    min="2"
+                    max="100"
+                    step="1"
+                    value={executionConfig.maxPositionPct}
+                    onChange={(event) => updateExecutionConfig("maxPositionPct", event.target.value)}
+                  />
+                </label>
+                <label>
+                  Slippage (bps)
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={executionConfig.slippageBps}
+                    onChange={(event) => updateExecutionConfig("slippageBps", event.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="execution-summary-grid">
+                <div>
+                  <span>Stageable</span>
+                  <strong>{executionSummary.stageable}</strong>
+                </div>
+                <div>
+                  <span>High R:R (2+)</span>
+                  <strong>{executionSummary.highRR}</strong>
+                </div>
+                <div>
+                  <span>Plan Score 75+</span>
+                  <strong>{executionSummary.highScore}</strong>
+                </div>
+              </div>
+              <div className="execution-top-actions">
+                <button
+                  type="button"
+                  className="ghost-action"
+                  onClick={() => draftSizedExecutionBrief(topExecutionPlan)}
+                  disabled={!topExecutionPlan}
+                >
+                  Draft Sized Brief
+                </button>
+                <button
+                  type="button"
+                  className="ghost-action"
+                  onClick={() => stageExecutionPlanPosition(topExecutionPlan)}
+                  disabled={!topExecutionPlan?.canStage}
+                >
+                  Stage Top Position
+                </button>
+              </div>
+            </div>
             <div className="alpha-list">
-              {alphaOpportunities.map((opportunity) => (
+              {alphaOpportunities.map((opportunity) => {
+                const executionPlan = executionPlanByTicker[opportunity.ticker];
+                return (
                 <div key={opportunity.id} className="alpha-item">
                   <div className="alpha-item-head">
                     <h4>{opportunity.ticker}</h4>
@@ -3351,6 +3633,26 @@ function App() {
                   <div className="alpha-progress">
                     <span style={{ width: `${opportunity.conviction}%` }} />
                   </div>
+                  {executionPlan ? (
+                    <div className="alpha-execution">
+                      <div>
+                        <span>Sized Entry</span>
+                        <strong>{formatCurrency(executionPlan.entry)}</strong>
+                      </div>
+                      <div>
+                        <span>Shares</span>
+                        <strong>{formatCompactNumber(executionPlan.plannedShares)}</strong>
+                      </div>
+                      <div>
+                        <span>Risk</span>
+                        <strong>{formatCurrency(executionPlan.potentialLoss)}</strong>
+                      </div>
+                      <div>
+                        <span>Plan Score</span>
+                        <strong>{executionPlan.planScore}</strong>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="alpha-actions">
                     <button type="button" className="ghost-action" onClick={() => setFocusTicker(opportunity.ticker)}>
                       Focus
@@ -3361,9 +3663,26 @@ function App() {
                     <button type="button" className="ghost-action" onClick={() => stageOpportunityBacktest(opportunity)}>
                       Stage Backtest
                     </button>
+                    <button
+                      type="button"
+                      className="ghost-action"
+                      onClick={() => draftSizedExecutionBrief(executionPlan)}
+                      disabled={!executionPlan}
+                    >
+                      Sized Brief
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-action"
+                      onClick={() => stageExecutionPlanPosition(executionPlan)}
+                      disabled={!executionPlan?.canStage}
+                    >
+                      Stage Position
+                    </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
               {!alphaOpportunities.length && (
                 <p className="hint-text">Run Market Scan to populate opportunity blueprints.</p>
               )}

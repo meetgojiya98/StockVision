@@ -2105,6 +2105,98 @@ kbd {
   color: var(--text-main);
 }
 
+.execution-config-panel {
+  margin-top: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 10px;
+}
+
+.execution-config-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.execution-config-head h3 {
+  margin: 0;
+  font-size: 0.86rem;
+  font-family: "Sora", sans-serif;
+}
+
+.execution-config-panel p {
+  margin: 8px 0 0;
+  color: var(--text-soft);
+  font-size: 0.77rem;
+}
+
+.execution-config-grid {
+  margin-top: 8px;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.execution-config-grid label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-soft);
+  font-size: 0.71rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.execution-config-grid input {
+  border-radius: 9px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+  padding: 7px 8px;
+  font-size: 0.78rem;
+}
+
+.execution-summary-grid {
+  margin-top: 8px;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.execution-summary-grid > div {
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 7px 8px;
+}
+
+.execution-summary-grid span {
+  display: block;
+  color: var(--text-soft);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.execution-summary-grid strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.82rem;
+}
+
+.execution-top-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.execution-top-actions .ghost-action {
+  padding: 6px 10px;
+  font-size: 0.75rem;
+}
+
 .alpha-list {
   margin-top: 10px;
   display: grid;
@@ -2191,6 +2283,34 @@ kbd {
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--accent), #58a5ff);
+}
+
+.alpha-execution {
+  margin-top: 8px;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.alpha-execution > div {
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 7px 8px;
+}
+
+.alpha-execution span {
+  display: block;
+  color: var(--text-soft);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.alpha-execution strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.79rem;
 }
 
 .alpha-actions {
@@ -2893,6 +3013,9 @@ kbd {
   .metrics-grid,
   .sentinel-stats,
   .alpha-metrics,
+  .execution-config-grid,
+  .execution-summary-grid,
+  .alpha-execution,
   .tactical-levels,
   .future-projection,
   .backtest-row,
