@@ -1,88 +1,96 @@
-import React, { useRef, useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createChart } from "lightweight-charts";
 
-// Palette of distinct colors for multiple tickers
-const COLORS = [
-  "#f44336", // red
-  "#4caf50", // green
-  "#2196f3", // blue
-  "#ff9800", // orange
-  "#9c27b0", // purple
-  "#00bcd4", // cyan
-  "#e91e63", // pink
-  "#3f51b5", // indigo
-];
+const SERIES_COLORS = ["#ff6b6b", "#5be7c4", "#ffb86b", "#6aa9ff", "#f4ff63", "#8efc6e", "#ff82d1"];
 
-export default function AdvancedChart({ dataByTicker, chartType = "candlestick" }) {
-  const chartContainerRef = useRef();
+function toChartTime(candle) {
+  if (candle.datetime && candle.datetime.includes(":")) {
+    const parsed = Date.parse(candle.datetime.replace(" ", "T"));
+    if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
+  }
+  return candle.date;
+}
+
+export default function AdvancedChart({ dataByTicker, mode = "candlestick", theme = "night" }) {
+  const chartContainerRef = useRef(null);
 
   useEffect(() => {
-    if (!dataByTicker || Object.keys(dataByTicker).length === 0) return;
-
     const container = chartContainerRef.current;
-    container.innerHTML = ""; // Clear previous chart
+    if (!container || !dataByTicker || Object.keys(dataByTicker).length === 0) return;
 
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: 400,
+      height: 430,
       layout: {
-        backgroundColor: "#0f172a",
-        textColor: "white",
+        background: { color: theme === "night" ? "#09162f" : "#f5f9ff" },
+        textColor: theme === "night" ? "#d2ddff" : "#1d2a54",
+        fontFamily: "Space Grotesk, sans-serif",
       },
       grid: {
-        vertLines: { color: "#334158" },
-        horzLines: { color: "#334158" },
+        vertLines: { color: theme === "night" ? "rgba(160, 184, 255, 0.14)" : "rgba(75, 106, 175, 0.14)" },
+        horzLines: { color: theme === "night" ? "rgba(160, 184, 255, 0.14)" : "rgba(75, 106, 175, 0.14)" },
+      },
+      rightPriceScale: {
+        borderVisible: false,
       },
       timeScale: {
+        borderVisible: false,
         timeVisible: true,
         secondsVisible: false,
       },
       crosshair: {
-        mode: 1,
+        vertLine: { color: "rgba(255, 255, 255, 0.2)" },
+        horzLine: { color: "rgba(255, 255, 255, 0.2)" },
       },
     });
 
-    Object.entries(dataByTicker).forEach(([ticker, data], idx) => {
-      const color = COLORS[idx % COLORS.length];
-      const formattedData = data.map((d) => ({
-        time: d.date,
-        open: d.open,
-        high: d.high,
-        low: d.low,
-        close: d.close,
-      }));
+    Object.entries(dataByTicker).forEach(([ticker, candles], index) => {
+      const color = SERIES_COLORS[index % SERIES_COLORS.length];
+      const formatted = (candles || [])
+        .map((candle) => ({
+          time: toChartTime(candle),
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+        }))
+        .filter((item) => Number.isFinite(item.close));
 
-      if (chartType === "candlestick") {
-        const candleSeries = chart.addCandlestickSeries({
-          upColor: color,
-          downColor: color,
-          borderDownColor: color,
-          borderUpColor: color,
-          wickDownColor: color,
-          wickUpColor: color,
-        });
-        candleSeries.setData(formattedData);
-      } else if (chartType === "line") {
+      if (formatted.length === 0) return;
+
+      if (mode === "line") {
         const lineSeries = chart.addLineSeries({
           color,
-          lineWidth: 2,
+          lineWidth: 2.5,
+          title: ticker,
+          priceLineVisible: false,
         });
-
-        const lineData = formattedData.map(({ time, close }) => ({ time, value: close }));
-        lineSeries.setData(lineData);
+        lineSeries.setData(formatted.map((item) => ({ time: item.time, value: item.close })));
+      } else {
+        const candleSeries = chart.addCandlestickSeries({
+          upColor: color,
+          downColor: "#e4527f",
+          borderVisible: false,
+          wickUpColor: color,
+          wickDownColor: "#e4527f",
+          priceLineVisible: false,
+        });
+        candleSeries.setData(formatted);
       }
     });
 
-    const handleResize = () => {
+    chart.timeScale().fitContent();
+
+    const resizeObserver = new ResizeObserver(() => {
       chart.applyOptions({ width: container.clientWidth });
-    };
-    window.addEventListener("resize", handleResize);
+    });
+    resizeObserver.observe(container);
 
     return () => {
-      window.removeEventListener("resize", handleResize);
+      resizeObserver.disconnect();
       chart.remove();
     };
-  }, [dataByTicker, chartType]);
+  }, [dataByTicker, mode, theme]);
 
-  return <div ref={chartContainerRef} style={{ width: "100%", height: 400 }} />;
+  return <div ref={chartContainerRef} className="advanced-chart-canvas" />;
 }
