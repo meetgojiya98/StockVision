@@ -41,6 +41,7 @@ export default function AdvancedChart({
   useEffect(() => {
     const container = chartContainerRef.current;
     if (!container || !dataByTicker || Object.keys(dataByTicker).length === 0) return;
+    let cleanupResize = () => {};
 
     const chart = createChart(container, {
       width: container.clientWidth,
@@ -161,13 +162,20 @@ export default function AdvancedChart({
 
     chart.timeScale().fitContent();
 
-    const resizeObserver = new ResizeObserver(() => {
-      chart.applyOptions({ width: container.clientWidth });
-    });
-    resizeObserver.observe(container);
+    if (typeof window !== "undefined" && typeof window.ResizeObserver !== "undefined") {
+      const resizeObserver = new window.ResizeObserver(() => {
+        chart.applyOptions({ width: container.clientWidth });
+      });
+      resizeObserver.observe(container);
+      cleanupResize = () => resizeObserver.disconnect();
+    } else {
+      const onResize = () => chart.applyOptions({ width: container.clientWidth });
+      window.addEventListener("resize", onResize);
+      cleanupResize = () => window.removeEventListener("resize", onResize);
+    }
 
     return () => {
-      resizeObserver.disconnect();
+      cleanupResize();
       chart.remove();
     };
   }, [dataByTicker, mode, theme, focusTicker, focusMetrics, indicators]);

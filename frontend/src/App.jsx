@@ -53,10 +53,29 @@ const QUICK_PROMPTS = [
 const STAGGER_ITEM = { duration: 0.45, ease: "easeOut" };
 
 function usePersistentState(key, fallbackValue) {
+  function normalizeParsed(parsed) {
+    if (Array.isArray(fallbackValue)) {
+      return Array.isArray(parsed) ? parsed : fallbackValue;
+    }
+    if (typeof fallbackValue === "number") {
+      return Number.isFinite(parsed) ? parsed : fallbackValue;
+    }
+    if (typeof fallbackValue === "string") {
+      return typeof parsed === "string" ? parsed : fallbackValue;
+    }
+    if (typeof fallbackValue === "object" && fallbackValue !== null) {
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return { ...fallbackValue, ...parsed };
+      }
+      return fallbackValue;
+    }
+    return parsed ?? fallbackValue;
+  }
+
   const [state, setState] = useState(() => {
     try {
       const saved = localStorage.getItem(key);
-      return saved ? JSON.parse(saved) : fallbackValue;
+      return saved ? normalizeParsed(JSON.parse(saved)) : fallbackValue;
     } catch {
       return fallbackValue;
     }
@@ -250,6 +269,24 @@ function App() {
   const [aiError, setAiError] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiHistory, setAiHistory] = usePersistentState("sv-ai-history", []);
+
+  useEffect(() => {
+    if (!Array.isArray(selectedTickers)) {
+      setSelectedTickers(DEFAULT_TICKERS);
+      return;
+    }
+    const sanitized = selectedTickers
+      .map((item) => (typeof item === "string" ? item : item?.symbol || item?.ticker || ""))
+      .map(normalizeTicker)
+      .filter(Boolean)
+      .slice(0, 8);
+    const changed =
+      sanitized.length !== selectedTickers.length ||
+      sanitized.some((ticker, index) => ticker !== selectedTickers[index]);
+    if (changed) {
+      setSelectedTickers(sanitized.length ? sanitized : DEFAULT_TICKERS);
+    }
+  }, [selectedTickers, setSelectedTickers]);
 
   useEffect(() => {
     document.body.classList.remove("theme-night", "theme-day");

@@ -59,11 +59,17 @@ body {
   position: relative;
 }
 
+.app-shell > *:not(.ambient-backdrop) {
+  position: relative;
+  z-index: 2;
+}
+
 .ambient-backdrop {
   position: absolute;
   inset: 0;
   pointer-events: none;
   overflow: hidden;
+  z-index: 0;
 }
 
 .orb {
