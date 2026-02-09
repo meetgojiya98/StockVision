@@ -936,83 +936,129 @@ body::after {
   color: var(--text-soft);
 }
 
-.workspace-nav {
+.home-workspace-hub {
   margin-top: 14px;
-  padding: 14px 16px;
+  padding: 16px;
+  background:
+    radial-gradient(130% 120% at 90% -20%, rgba(99, 148, 240, 0.18), transparent 56%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
 }
 
-.workspace-nav-head {
+.home-workspace-head {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
 }
 
-.workspace-nav-head h2 {
+.home-workspace-eyebrow {
   margin: 0;
-  font-family: "Sora", sans-serif;
-  font-size: 1.06rem;
+  font-size: 0.72rem;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 700;
 }
 
-.workspace-nav-head p {
+.home-workspace-head h2 {
+  margin: 5px 0 0;
+  font-family: "Sora", sans-serif;
+  font-size: 1.08rem;
+}
+
+.home-workspace-head p {
   margin: 4px 0 0;
   color: var(--text-soft);
   font-size: 0.84rem;
 }
 
-.workspace-shortcuts {
-  margin: 0;
-  color: var(--text-soft);
-  font-size: 0.78rem;
-  white-space: nowrap;
+.home-workspace-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
-.workspace-tablist {
+.home-workspace-meta span {
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 4px 8px;
+  font-size: 0.69rem;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.home-workspace-grid {
   margin-top: 12px;
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.workspace-tab {
+.home-workspace-card {
   text-align: left;
-  border-radius: 14px;
+  border-radius: 13px;
   border: 1px solid var(--panel-border);
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-main);
-  padding: 10px 11px;
+  padding: 10px;
   cursor: pointer;
   display: grid;
-  gap: 4px;
+  gap: 6px;
   transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
 
-.workspace-tab span {
+.home-workspace-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.home-workspace-card-head span {
   font-weight: 700;
   font-size: 0.86rem;
   font-family: "Sora", sans-serif;
 }
 
-.workspace-tab small {
+.home-workspace-card-head em {
+  color: color-mix(in oklab, var(--accent) 64%, var(--text-main));
+  font-style: normal;
+  font-size: 0.72rem;
+}
+
+.home-workspace-card p {
+  margin: 0;
   color: var(--text-soft);
   font-size: 0.74rem;
   line-height: 1.35;
 }
 
-.workspace-tab em {
-  color: color-mix(in oklab, var(--accent) 62%, var(--text-main));
-  font-style: normal;
-  font-size: 0.74rem;
+.home-workspace-meter {
+  margin-top: 2px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
 }
 
-.workspace-tab:hover {
+.home-workspace-meter span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), #58a5ff);
+}
+
+.home-workspace-card:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in oklab, var(--accent) 34%, var(--panel-border));
+  border-color: color-mix(in oklab, var(--accent) 36%, var(--panel-border));
 }
 
-.workspace-tab.active {
+.home-workspace-card.active {
   border-color: color-mix(in oklab, var(--accent) 42%, var(--panel-border));
-  background: color-mix(in oklab, var(--accent) 12%, rgba(255, 255, 255, 0.08));
+  background: color-mix(in oklab, var(--accent) 11%, rgba(255, 255, 255, 0.09));
 }
 
 .workspace-section {
@@ -1341,7 +1387,7 @@ body::after {
   display: none;
 }
 
-.app-shell[data-focus="on"] .workspace-nav {
+.app-shell[data-focus="on"] .home-workspace-hub {
   margin-top: 8px;
 }
 
@@ -3433,7 +3479,7 @@ kbd {
     justify-content: flex-start;
   }
 
-  .workspace-tablist {
+  .home-workspace-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -3495,7 +3541,7 @@ kbd {
     width: 100%;
   }
 
-  .workspace-nav-head {
+  .home-workspace-head {
     flex-direction: column;
   }
 
@@ -3503,11 +3549,7 @@ kbd {
     width: 100%;
   }
 
-  .workspace-shortcuts {
-    white-space: normal;
-  }
-
-  .workspace-tablist {
+  .home-workspace-grid {
     grid-template-columns: 1fr;
   }
 

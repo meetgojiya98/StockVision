@@ -3039,7 +3039,7 @@ function App() {
                 <BrandLogo />
                 <div>
                   <p className="brand-title">StockVision</p>
-                  <p className="brand-subtitle">AI Trading Command Center</p>
+                  <p className="brand-subtitle">Market Intelligence OS</p>
                 </div>
               </div>
               <span className="auth-story-chip">Cloud Vault Enabled</span>
@@ -3225,7 +3225,7 @@ function App() {
           <BrandLogo />
           <div>
             <p className="brand-title">StockVision</p>
-            <p className="brand-subtitle">AI Trading Command Center</p>
+            <p className="brand-subtitle">Market Intelligence OS</p>
           </div>
         </div>
         <div className="topbar-right">
@@ -3505,29 +3505,49 @@ function App() {
         </p>
       </motion.section>
 
-      <section className="glass-card workspace-nav">
-        <div className="workspace-nav-head">
+      <section className="glass-card home-workspace-hub">
+        <div className="home-workspace-head">
           <div>
+            <p className="home-workspace-eyebrow">Navigation Layer</p>
             <h2>{activeWorkspaceInfo.label}</h2>
             <p>{activeWorkspaceInfo.hint}</p>
           </div>
-          <p className="workspace-shortcuts">Alt+1/2/3/4 workspace · Ctrl/Cmd+K command menu</p>
+          <div className="home-workspace-meta">
+            <span>Alt+1/2/3/4</span>
+            <span>Ctrl/Cmd+K</span>
+            <span>{focusMode ? "Focus On" : "Focus Off"}</span>
+          </div>
         </div>
-        <div className="workspace-tablist" role="tablist" aria-label="Workspace tabs">
-          {workspaceTabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={activeWorkspace === tab.id}
-              className={`workspace-tab ${activeWorkspace === tab.id ? "active" : ""}`}
-              onClick={() => setActiveWorkspace(tab.id)}
-            >
-              <span>{tab.label}</span>
-              <small>{tab.hint}</small>
-              <em>{tab.stat}</em>
-            </button>
-          ))}
+        <div className="home-workspace-grid" role="tablist" aria-label="Workspace tabs">
+          {workspaceTabs.map((tab) => {
+            const momentum =
+              tab.id === "market"
+                ? clamp(scanCoverage.available * 16 + (loadingData ? 8 : 0), 18, 100)
+                : tab.id === "intelligence"
+                ? clamp((aiInsight ? 68 : 26) + newsItems.length * 2, 18, 100)
+                : tab.id === "portfolio"
+                ? clamp((positions.length ? 44 : 24) + portfolioGuardrails.length * 10, 18, 100)
+                : clamp((backtestResult?.summary ? 72 : 28) + (backtestResult?.summary?.trades || 0) * 2, 18, 100);
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={activeWorkspace === tab.id}
+                className={`home-workspace-card ${activeWorkspace === tab.id ? "active" : ""}`}
+                onClick={() => setActiveWorkspace(tab.id)}
+              >
+                <div className="home-workspace-card-head">
+                  <span>{tab.label}</span>
+                  <em>{tab.stat}</em>
+                </div>
+                <p>{tab.hint}</p>
+                <div className="home-workspace-meter">
+                  <span style={{ width: `${momentum}%` }} />
+                </div>
+              </button>
+            );
+          })}
         </div>
       </section>
 
